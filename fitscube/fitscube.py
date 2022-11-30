@@ -15,6 +15,19 @@ def init_cube(
     old_name: str,
     n_chan: int,
 ) -> Tuple[np.ndarray, fits.Header, int, bool,]:
+    """Initialize the data cube.
+
+    Args:
+        old_name (str): Old FITS file name
+        n_chan (int): Number of channels
+
+    Raises:
+        KeyError: If 2D and REFFREQ is not in header
+        ValueError: If not 2D and FREQ is not in header
+
+    Returns:
+        Tuple[np.ndarray, fits.Header, int, bool,]: Output data cube, header, index of frequency axis, and if 2D
+    """
     old_header = fits.getheader(old_name)
     old_data = fits.getdata(old_name)
     is_2d = len(old_data.shape) == 2
@@ -57,6 +70,16 @@ def main(
     out_cube: str,
     overwrite: bool = False,
 ):
+    """Combine FITS files into a cube.
+
+    Args:
+        file_list (List[str]): List of FITS files to combine
+        out_cube (str): Name of output FITS file
+        overwrite (bool, optional): Whether to overwrite output cube. Defaults to False.
+
+    Raises:
+        FileExistsError: If output file exists and overwrite is False.
+    """
     if not overwrite and os.path.exists(out_cube):
         raise FileExistsError(
             f"Output file {out_cube} already exists. Use --overwrite to overwrite."
