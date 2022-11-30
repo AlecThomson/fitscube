@@ -4,16 +4,17 @@
 import os
 from typing import List, Tuple
 
-from astropy.io import fits
 import astropy.units as u
-from astropy.wcs import WCS
 import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
 from tqdm.auto import tqdm
+
 
 def init_cube(
     old_name: str,
     n_chan: int,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, fits.Header, int, bool,]:
     old_header = fits.getheader(old_name)
     old_data = fits.getdata(old_name)
     is_2d = len(old_data.shape) == 2
@@ -38,9 +39,7 @@ def init_cube(
                 idx = j
                 break
         if idx == 0:
-            raise ValueError(
-                "No FREQ axis found in WCS. "
-            )
+            raise ValueError("No FREQ axis found in WCS. ")
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -52,13 +51,16 @@ def init_cube(
     data_cube = np.zeros(cube_shape)
     return data_cube, old_header, idx, is_2d
 
+
 def main(
     file_list: List[str],
     out_cube: str,
     overwrite: bool = False,
 ):
     if not overwrite and os.path.exists(out_cube):
-        raise FileExistsError(f"Output file {out_cube} already exists. Use --overwrite to overwrite.")
+        raise FileExistsError(
+            f"Output file {out_cube} already exists. Use --overwrite to overwrite."
+        )
     freqs = []
     for chan, image in enumerate(
         tqdm(
@@ -71,7 +73,7 @@ def main(
             data_cube, old_header, idx, is_2d = init_cube(
                 old_name=image,
                 n_chan=len(file_list),
-        )
+            )
 
         plane = fits.getdata(image)
         data_cube[chan] = plane
@@ -91,9 +93,7 @@ def main(
     else:
         wcs = WCS(old_header)
         fits_idx = 0
-        for j, t in enumerate(
-            wcs.axis_type_name
-        ):  # Keep to match index order
+        for j, t in enumerate(wcs.axis_type_name):  # Keep to match index order
             if t == "FREQ":
                 fits_idx = j
                 break
@@ -109,10 +109,13 @@ def main(
 
 def cli():
     import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file_list", nargs="+", help="List of FITS files to combine")
     parser.add_argument("out_cube", help="Output FITS file")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists")
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Overwrite output file if it exists"
+    )
     args = parser.parse_args()
     main(
         file_list=args.file_list,
@@ -120,5 +123,6 @@ def cli():
         overwrite=args.overwrite,
     )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     cli()
