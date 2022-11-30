@@ -2,9 +2,11 @@
 """Fitscube: Combine FITS files into a cube.
 
 Assumes:
+- Images are passed in frequency order
 - All files have the same WCS
 - All files have the same shape / pixel grid
 - Frequency is either a WCS axis or in the REFFREQ header keyword
+- All the relevant information is in the first header of the first image
 
 """
 
