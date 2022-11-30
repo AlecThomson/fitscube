@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fitscube: Combine FITS files into a cube."""
+"""Fitscube: Combine FITS files into a cube.
+
+Assumes:
+- All files have the same WCS
+- All files have the same shape / pixel grid
+- Frequency is either a WCS axis or in the REFFREQ header keyword
+
+"""
 
 import os
 from typing import List, Tuple
@@ -53,6 +60,8 @@ def init_cube(
                 break
         if idx == 0:
             raise ValueError("No FREQ axis found in WCS. ")
+        fits_idx = len(wcs.axis_type_names) - idx
+        print(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -99,7 +108,12 @@ def main(
             )
 
         plane = fits.getdata(image)
-        data_cube[chan] = plane
+        slicer = [slice(None)] * len(plane.shape)
+        if is_2d:
+            slicer.insert(0, chan)
+        else:
+            slicer[idx] = chan
+        data_cube[tuple(slicer)] = plane
         freq = WCS(image).spectral.pixel_to_world(0)
         freqs.append(freq.to(u.Hz).value)
     # Write out cubes
@@ -115,11 +129,7 @@ def main(
         fits_idx = 3
     else:
         wcs = WCS(old_header)
-        fits_idx = 0
-        for j, t in enumerate(wcs.axis_type_name):  # Keep to match index order
-            if t == "FREQ":
-                fits_idx = j
-                break
+        fits_idx = fits_idx = len(wcs.axis_type_names) - idx
 
     new_header["NAXIS"] = len(data_cube.shape)
     new_header[f"NAXIS{fits_idx}"] = len(freqs)
