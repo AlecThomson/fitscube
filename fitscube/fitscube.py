@@ -78,7 +78,7 @@ def main(
     file_list: List[str],
     out_cube: str,
     overwrite: bool = False,
-):
+) -> None:
     """Combine FITS files into a cube.
 
     Args:
