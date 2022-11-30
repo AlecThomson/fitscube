@@ -17,5 +17,3 @@ fitscube = 'fitscube.fitscube:cli'
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-
