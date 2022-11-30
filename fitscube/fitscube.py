@@ -93,6 +93,10 @@ def main(
         raise FileExistsError(
             f"Output file {out_cube} already exists. Use --overwrite to overwrite."
         )
+
+    # TODO: Check that all files have the same WCS
+    # TODO: Check if PSF is in header, and then add it to the output header / beamtable
+
     freqs = []
     for chan, image in enumerate(
         tqdm(
