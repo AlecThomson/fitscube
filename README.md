@@ -2,6 +2,11 @@
 
 Combine FITS images into a cube.
 
+Current assumptions:
+- All files have the same WCS
+- All files have the same shape / pixel grid
+- Frequency is either a WCS axis or in the REFFREQ header keyword
+
 ## Installation
 
 Install from git:
@@ -41,3 +46,14 @@ combine_fits(
 
 ## Convolving to a common resolution
 See [RACS-Tools](https://github.com/AlecThomson/RACS-tools).
+
+## License
+MIT
+
+## Contributing
+Contributions are welcome. Please open an issue or pull request.
+
+## TODO
+- [ ] Add support for non-frequency axes
+- [ ] Add tracking of the PSF in header / beamtable
+- [ ] Add convolution to a common resolution via RACS-Tools
