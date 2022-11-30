@@ -2,7 +2,7 @@
 """Fitscube: Combine FITS files into a cube."""
 
 import os
-from typing import List
+from typing import List, Tuple
 
 from astropy.io import fits
 import astropy.units as u
@@ -10,6 +10,47 @@ from astropy.wcs import WCS
 import numpy as np
 from tqdm.auto import tqdm
 
+def init_cube(
+    old_name: str,
+    n_chan: int,
+) -> np.ndarray:
+    old_header = fits.getheader(old_name)
+    old_data = fits.getdata(old_name)
+    is_2d = len(old_data.shape) == 2
+    if is_2d:
+        print("Input image is 2D. Looking for REFFREQ.")
+        idx = 0
+        # Look for REFREQ in header
+        try:
+            _ = old_header["REFFREQ"]
+        except KeyError:
+            raise KeyError("Images are 2D and REFFREQ not found in header")
+
+    else:
+        print("Input image is a cube. Looking for FREQ axis.")
+        wcs = WCS(old_header)
+        # Look for the frequency axis in wcs
+        idx = 0
+        for j, t in enumerate(
+            wcs.axis_type_names[::-1]
+        ):  # Reverse to match index order
+            if t == "FREQ":
+                idx = j
+                break
+        if idx == 0:
+            raise ValueError(
+                "No FREQ axis found in WCS. "
+            )
+
+    plane_shape = list(old_data.shape)
+    cube_shape = plane_shape.copy()
+    if is_2d:
+        cube_shape.insert(0, n_chan)
+    else:
+        cube_shape[idx] = n_chan
+
+    data_cube = np.zeros(cube_shape)
+    return data_cube, old_header, idx, is_2d
 
 def main(
     file_list: List[str],
@@ -27,27 +68,10 @@ def main(
     ):
         # init cube
         if chan == 0:
-            old_name = image
-            old_header = fits.getheader(old_name)
-            wcs = WCS(old_header)
-            # Look for the frequency axis in wcs
-            idx = 0
-            for j, t in enumerate(
-                wcs.axis_type_names[::-1]
-            ):  # Reverse to match index order
-                if t == "FREQ":
-                    idx = j
-                    break
-            if idx == 0:
-                raise ValueError(
-                    "No frequency axis found in WCS. "
-                )
-            plane_0 = fits.getdata(old_name)
-            plane_shape = list(plane_0.shape)
-            cube_shape = plane_shape.copy()
-            cube_shape[idx] = len(file_list)
-
-            data_cube = np.zeros(cube_shape)
+            data_cube, old_header, idx, is_2d = init_cube(
+                old_name=image,
+                n_chan=len(file_list),
+        )
 
         plane = fits.getdata(image)
         data_cube[chan] = plane
@@ -62,12 +86,24 @@ def main(
         freqs_file = out_cube.replace(".fits", "_freqs.txt")
         np.savetxt(freqs_file.to(u.Hz).value, freqs)
     new_header = old_header.copy()
-    new_header["NAXIS"] = len(cube_shape)
-    new_header[f"NAXIS{idx}"] = len(freqs)
-    new_header[f"CRPIX{idx}"] = 1
-    new_header[f"CRVAL{idx}"] = freqs[0].value
-    new_header[f"CDELT{idx}"] = np.diff(freqs).mean().value
-    new_header[f"CUNIT{idx}"] = "Hz"
+    if is_2d:
+        fits_idx = 3
+    else:
+        wcs = WCS(old_header)
+        fits_idx = 0
+        for j, t in enumerate(
+            wcs.axis_type_name
+        ):  # Keep to match index order
+            if t == "FREQ":
+                fits_idx = j
+                break
+
+    new_header["NAXIS"] = len(data_cube.shape)
+    new_header[f"NAXIS{fits_idx}"] = len(freqs)
+    new_header[f"CRPIX{fits_idx}"] = 1
+    new_header[f"CRVAL{fits_idx}"] = freqs[0].value
+    new_header[f"CDELT{fits_idx}"] = np.diff(freqs).mean().value
+    new_header[f"CUNIT{fits_idx}"] = "Hz"
     fits.writeto(out_cube, data_cube, new_header, overwrite=overwrite)
 
 
