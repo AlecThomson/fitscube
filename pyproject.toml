@@ -12,7 +12,7 @@ numpy = "^1.20"
 tqdm = "*"
 
 [tool.poetry.scripts]
-my_package_cli = 'fitscube.fitscube:cli'
+fitscube = 'fitscube.fitscube:cli'
 
 [build-system]
 requires = ["poetry-core"]
