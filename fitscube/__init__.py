@@ -1,1 +1,2 @@
-from .fitscube import init_cube, main as combine_fits
+from .fitscube import init_cube
+from .fitscube import main as combine_fits

@@ -114,14 +114,18 @@ def main(
             )
 
         plane = fits.getdata(image)
+        header = fits.getheader(image)
         slicer = [slice(None)] * len(plane.shape)
         if is_2d:
             slicer.insert(0, chan)
         else:
             slicer[idx] = chan
         data_cube[tuple(slicer)] = plane
-        freq = WCS(image).spectral.pixel_to_world(0)
-        freqs.append(freq.to(u.Hz).value)
+        if is_2d:
+            freqs.append(header["REFFREQ"])
+        else:
+            freq = WCS(image).spectral.pixel_to_world(0)
+            freqs.append(freq.to(u.Hz).value)
     # Write out cubes
     freqs = np.array(freqs) * u.Hz
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
@@ -136,7 +140,6 @@ def main(
     else:
         wcs = WCS(old_header)
         fits_idx = fits_idx = len(wcs.axis_type_names) - idx
-
     new_header["NAXIS"] = len(data_cube.shape)
     new_header[f"NAXIS{fits_idx}"] = len(freqs)
     new_header[f"CRPIX{fits_idx}"] = 1
@@ -150,7 +153,11 @@ def cli():
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file_list", nargs="+", help="List of FITS files to combine (in frequency order)")
+    parser.add_argument(
+        "file_list",
+        nargs="+",
+        help="List of FITS files to combine (in frequency order)",
+    )
     parser.add_argument("out_cube", help="Output FITS file")
     parser.add_argument(
         "--overwrite", action="store_true", help="Overwrite output file if it exists"
