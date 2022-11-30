@@ -150,7 +150,7 @@ def cli():
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file_list", nargs="+", help="List of FITS files to combine")
+    parser.add_argument("file_list", nargs="+", help="List of FITS files to combine (in frequency order)")
     parser.add_argument("out_cube", help="Output FITS file")
     parser.add_argument(
         "--overwrite", action="store_true", help="Overwrite output file if it exists"
