@@ -1,6 +1,9 @@
 # FITSCUBE
 
-Combine FITS images into a cube.
+From the [wsclean](https://wsclean.readthedocs.io/) docs:
+> WSClean does not output these images in a normal “imaging cube” like CASA does, i.e., a single fits file with several images in it. For now I’ve decided not to implement this (one of the reasons for this is that information about the synthesized beam is not properly stored in a multi-frequency fits file). One has of course the option to combine the output manually, e.g. with a simple Python script.
+
+This is a simple Python script to combine (single-frequency) FITS images manually.
 
 Current assumptions:
 - Images are passed in frequency order
