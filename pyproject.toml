@@ -6,7 +6,7 @@ authors = ["Thomson, Alec (S&A, Kensington) <AlecThomson@users.noreply.github.co
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.7"
 astropy = "^5.0"
 numpy = "^1.20"
 tqdm = "*"
