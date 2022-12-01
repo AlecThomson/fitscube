@@ -89,16 +89,20 @@ def parse_freqs(
         List[float]: List of frequencies
     """
     if ignore_freq:
+        print("Ignoring frequency information")
         return np.arange(len(file_list)) * u.Hz
-    if freq_file is None and freq_list is None:
-        raise ValueError("Must specify either freq_file or freq_list")
+    # if freq_file is None and freq_list is None:
+    #     raise ValueError("Must specify either freq_file or freq_list")
     if freq_file is not None and freq_list is not None:
         raise ValueError("Must specify either freq_file or freq_list, not both")
     if freq_file is not None:
+        print(f"Reading frequencies from {freq_file}")
         freqs = np.loadtxt(freq_file) * u.Hz
     elif freq_list is not None:
+        print(f"Using list of specified frequencies")
         freqs = np.array(freq_list) * u.Hz
     else:
+        print("Reading frequencies from FITS files")
         freqs = np.arange(len(file_list)) * u.Hz
         for chan, image in enumerate(
             tqdm(
@@ -110,10 +114,20 @@ def parse_freqs(
             is_2d = len(plane.shape) == 2
             header = fits.getheader(image)
             if is_2d:
-                freqs[chan] = header["REFFREQ"] * u.Hz
+                try:
+                    freqs[chan] = header["REFFREQ"] * u.Hz
+                except KeyError:
+                    raise KeyError(
+                        "REFFREQ not in header. Cannot combine 2D images without frequency information."
+                    )
             else:
-                freq = WCS(image).spectral.pixel_to_world(0)
-                freqs[chan] = freq.to(u.Hz)
+                try:
+                    freq = WCS(image).spectral.pixel_to_world(0)
+                    freqs[chan] = freq.to(u.Hz)
+                except Exception as e:
+                    raise ValueError(
+                        "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
+                    ) from e
 
     return freqs
 
@@ -258,6 +272,9 @@ def cli():
         raise FileExistsError(
             f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
         )
+
+    if overwrite:
+        print("Overwriting output files")
 
     hdul, freqs = main(
         file_list=args.file_list,
