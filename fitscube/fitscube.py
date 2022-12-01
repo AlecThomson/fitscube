@@ -124,7 +124,7 @@ def main(
     freq_file: str = None,
     freq_list: List[float] = None,
     ignore_freq: bool = False,
-) -> fits.HDUList:
+) -> Tuple[fits.HDUList, u.Quantity]:
     """Combine FITS files into a cube.
 
     Args:
@@ -173,7 +173,6 @@ def main(
             )
 
         plane = fits.getdata(image)
-        header = fits.getheader(image)
         slicer = [slice(None)] * len(plane.shape)
         if is_2d:
             slicer.insert(0, chan)
@@ -184,9 +183,8 @@ def main(
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
     if not even_freq:
         print("WARNING: Frequencies are not evenly spaced")
-        print("Writing out frequency axis as a separate file")
-        freqs_file = out_cube.replace(".fits", "_freqs.txt")
-        np.savetxt(freqs_file.to(u.Hz).value, freqs)
+        print("Use the frequency file to specify the frequencies")
+
     new_header = old_header.copy()
     if is_2d:
         fits_idx = 3
@@ -206,7 +204,7 @@ def main(
     hdu = fits.PrimaryHDU(data_cube, header=new_header)
     hdul = fits.HDUList([hdu])
 
-    return hdul
+    return hdul, freqs
 
 
 def cli():
@@ -255,7 +253,13 @@ def cli():
             f"Output file {out_cube} already exists. Use --overwrite to overwrite."
         )
 
-    hdul = main(
+    freqs_file = out_cube.replace(".fits", ".freqs_Hz.txt")
+    if os.path.exists(freqs_file) and not overwrite:
+        raise FileExistsError(
+            f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
+        )
+
+    hdul, freqs = main(
         file_list=args.file_list,
         out_cube=args.out_cube,
         freq_file=args.freq_file,
@@ -264,7 +268,9 @@ def cli():
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
-
+    print(f"Write cube to {out_cube}")
+    np.savetxt(freqs_file, freqs.to(u.Hz).value)
+    print(f"Write frequencies to {freqs_file}")
 
 if __name__ == "__main__":
     cli()
