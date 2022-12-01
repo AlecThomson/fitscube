@@ -49,7 +49,7 @@ Python:
 ```python
 from fitscube import combine_fits
 
-hdu_list = combine_fits(
+hdu_list, frequencies = combine_fits(
     ['file1.fits', 'file2.fits', 'file3.fits'],
     'out.fits',
 )
