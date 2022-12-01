@@ -22,7 +22,7 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 
 Command line:
 ```bash
-# fitscube -h
+fitscube -h
 # usage: fitscube [-h] [-o] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq]
 #                 file_list [file_list ...] out_cube
 
