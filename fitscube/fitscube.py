@@ -272,5 +272,6 @@ def cli():
     np.savetxt(freqs_file, freqs.to(u.Hz).value)
     print(f"Write frequencies to {freqs_file}")
 
+
 if __name__ == "__main__":
     cli()
