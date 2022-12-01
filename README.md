@@ -52,7 +52,6 @@ from fitscube import combine_fits
 hdu_list = combine_fits(
     ['file1.fits', 'file2.fits', 'file3.fits'],
     'out.fits',
-    overwrite=True
 )
 ```
 
