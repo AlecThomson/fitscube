@@ -23,13 +23,10 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 Command line:
 ```bash
 fitscube -h
-# usage: fitscube [-h] [-o] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq]
-#                 file_list [file_list ...] out_cube
+# usage: fitscube [-h] [-o] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] file_list [file_list ...] out_cube
 
-# Fitscube: Combine FITS files into a cube. Assumes: - Images are passed in frequency order - All
-# files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS
-# axis or in the REFFREQ header keyword - All the relevant information is in the first header of the
-# first image
+# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid -
+# Frequency is either a WCS axis or in the REFFREQ header keyword - All the relevant information is in the first header of the first image
 
 # positional arguments:
 #   file_list             List of FITS files to combine (in frequency order)
@@ -43,16 +40,38 @@ fitscube -h
 #   --freqs FREQS [FREQS ...]
 #                         List of frequencies in Hz
 #   --ignore-freq         Ignore frequency information and just stack (probably not what you want)
+stokescube -h
+# usage: stokescube [-h] [-v STOKES_V_FILE] [--overwrite] stokes_I_file stokes_Q_file stokes_U_file output_file
+
+# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel
+# grid - All the relevant information is in the first header of the first image
+
+# positional arguments:
+#   stokes_I_file         Stokes I file
+#   stokes_Q_file         Stokes Q file
+#   stokes_U_file         Stokes U file
+#   output_file           Output file
+
+# optional arguments:
+#   -h, --help            show this help message and exit
+#   -v STOKES_V_FILE, --stokes_V_file STOKES_V_FILE
+#                         Stokes V file
+#   --overwrite           Overwrite output file if it exists
 ```
 
 Python:
 ```python
-from fitscube import combine_fits
+from fitscube import combine_fits, combine_stokes
 
 hdu_list, frequencies = combine_fits(
     ['file1.fits', 'file2.fits', 'file3.fits'],
-    'out.fits',
 )
+hdus_list = combine_stokes(
+    'stokes_I.fits',
+    'stokes_Q.fits',
+    'stokes_U.fits',
+)
+
 ```
 
 ## Convolving to a common resolution
