@@ -13,6 +13,7 @@ tqdm = "*"
 
 [tool.poetry.scripts]
 fitscube = 'fitscube.fitscube:cli'
+stokescube = 'fitscube.stokescube:cli'
 
 [build-system]
 requires = ["poetry-core"]
