@@ -46,15 +46,11 @@ def init_cube(
         print("Input image is a cube. Looking for FREQ axis.")
         wcs = WCS(old_header)
         # Look for the frequency axis in wcs
-        for j, t in enumerate(
-            wcs.axis_type_names[::-1]
-        ):  # Reverse to match index order
-            if t == "FREQ":
-                idx = j
-                break
-        if idx == 0:
-            raise ValueError("No FREQ axis found in WCS. ")
-        fits_idx = len(wcs.axis_type_names) - idx
+        try:
+            idx = wcs.axis_type_names[::-1].index("FREQ")
+        except ValueError:
+            raise ValueError("No FREQ axis found in WCS.")
+        fits_idx = wcs.axis_type_names.index("FREQ")
         print(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
 
     plane_shape = list(old_data.shape)
@@ -134,7 +130,6 @@ def parse_freqs(
 
 def main(
     file_list: List[str],
-    out_cube: str,
     freq_file: str = None,
     freq_list: List[float] = None,
     ignore_freq: bool = False,
@@ -143,7 +138,6 @@ def main(
 
     Args:
         file_list (List[str]): List of FITS files to combine
-        out_cube (str): Name of output FITS file
         overwrite (bool, optional): Whether to overwrite output cube. Defaults to False.
 
     Raises:
@@ -200,11 +194,11 @@ def main(
         print("Use the frequency file to specify the frequencies")
 
     new_header = old_header.copy()
+    wcs = WCS(old_header)
     if is_2d:
-        fits_idx = 3
+        fits_idx = len(wcs.axis_type_names) + 1
     else:
-        wcs = WCS(old_header)
-        fits_idx = fits_idx = len(wcs.axis_type_names) - idx
+        fits_idx = wcs.axis_type_names.index("FREQ")
     new_header["NAXIS"] = len(data_cube.shape)
     new_header[f"NAXIS{fits_idx}"] = len(freqs)
     new_header[f"CRPIX{fits_idx}"] = 1
