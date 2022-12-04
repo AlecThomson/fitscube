@@ -3,7 +3,7 @@
 From the [wsclean](https://wsclean.readthedocs.io/) docs:
 > WSClean does not output these images in a normal “imaging cube” like CASA does, i.e., a single fits file with several images in it. For now I’ve decided not to implement this (one of the reasons for this is that information about the synthesized beam is not properly stored in a multi-frequency fits file). One has of course the option to combine the output manually, e.g. with a simple Python script.
 
-This is a simple Python script to combine (single-frequency) FITS images manually.
+This is a simple Python script to combine (single-frequency or single-Stokes) FITS images manually.
 
 Current assumptions:
 - All files have the same WCS
@@ -40,6 +40,7 @@ fitscube -h
 #   --freqs FREQS [FREQS ...]
 #                         List of frequencies in Hz
 #   --ignore-freq         Ignore frequency information and just stack (probably not what you want)
+
 stokescube -h
 # usage: stokescube [-h] [-v STOKES_V_FILE] [--overwrite] stokes_I_file stokes_Q_file stokes_U_file output_file
 
