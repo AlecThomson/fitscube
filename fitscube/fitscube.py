@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fitscube: Combine FITS files into a cube.
+"""Fitscube: Combine single-frequency FITS files into a cube.
 
 Assumes:
 - All files have the same WCS
@@ -279,9 +279,9 @@ def cli():
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
-    print(f"Write cube to {out_cube}")
+    print(f"Written cube to {out_cube}")
     np.savetxt(freqs_file, freqs.to(u.Hz).value)
-    print(f"Write frequencies to {freqs_file}")
+    print(f"Written frequencies to {freqs_file}")
 
 
 if __name__ == "__main__":
