@@ -1,3 +1,4 @@
-from .fitscube import init_cube
+from .fitscube import *
+from .stokescube import *
 from .fitscube import main as combine_fits
-from .fitscube import parse_freqs
+from .stokescube import main as combine_stokes
