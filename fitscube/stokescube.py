@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fitscube: Combine FITS files into a Stokes cube.
+"""Fitscube: Combine single-Stokes FITS files into a Stokes cube.
 
 Assumes:
 - All files have the same WCS
@@ -19,13 +19,7 @@ def main(
     stokes_Q_file: str,
     stokes_U_file: str,
     stokes_V_file: str = None,
-    output_file: str = None,
-    overwrite: bool = False,
 ) -> fits.HDUList:
-
-    # Check if output file exists
-    if os.path.exists(output_file) and not overwrite:
-        raise FileExistsError(f"Output file {output_file} already exists.")
 
     # Read in the data
     stokes_I = fits.getdata(stokes_I_file)
@@ -99,8 +93,8 @@ def cli():
     parser.add_argument("stokes_I_file", type=str, help="Stokes I file")
     parser.add_argument("stokes_Q_file", type=str, help="Stokes Q file")
     parser.add_argument("stokes_U_file", type=str, help="Stokes U file")
+    parser.add_argument("output_file", type=str, help="Output file")
     parser.add_argument("-v","--stokes_V_file", type=str, help="Stokes V file")
-    parser.add_argument("--output_file", type=str, help="Output file")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists")
 
     args = parser.parse_args()
@@ -112,9 +106,14 @@ def cli():
             f"Output file {output_file} already exists. Use --overwrite to overwrite."
         )
 
-    hdul = main()
+    hdul = main(
+        stokes_I_file=args.stokes_I_file,
+        stokes_Q_file=args.stokes_Q_file,
+        stokes_U_file=args.stokes_U_file,
+        stokes_V_file=args.stokes_V_file,
+    )
     hdul.writeto(output_file, overwrite=overwrite)
-    print(f"Write cube to {output_file}")
+    print(f"Written cube to {output_file}")
 
 if __name__ == "__main__":
     cli()
