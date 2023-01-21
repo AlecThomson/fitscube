@@ -272,7 +272,6 @@ def cli():
 
     hdul, freqs = main(
         file_list=args.file_list,
-        out_cube=args.out_cube,
         freq_file=args.freq_file,
         freq_list=args.freqs,
         ignore_freq=args.ignore_freq,
