@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "fitscube"
-version = "0.2.0"
+version = "0.2.1"
 description = ""
 authors = ["Thomson, Alec (S&A, Kensington) <AlecThomson@users.noreply.github.com>"]
 readme = "README.md"
