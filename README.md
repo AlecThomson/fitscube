@@ -13,7 +13,12 @@ Current assumptions:
 
 ## Installation
 
-Install from git:
+Install from PyPI (stable):
+```
+pip install fitscube
+```
+
+Or, onstall from this git repo (latest):
 ```bash
 pip install git+https://github.com/AlecThomson/fitscube.git
 ```
