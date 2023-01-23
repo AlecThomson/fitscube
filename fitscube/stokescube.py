@@ -95,7 +95,7 @@ def cli():
     parser.add_argument("stokes_U_file", type=str, help="Stokes U file")
     parser.add_argument("output_file", type=str, help="Output file")
     parser.add_argument("-v","--stokes_V_file", type=str, help="Stokes V file")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite output file if it exists")
+    parser.add_argument("-o", "--overwrite", action="store_true", help="Overwrite output file if it exists")
 
     args = parser.parse_args()
 
