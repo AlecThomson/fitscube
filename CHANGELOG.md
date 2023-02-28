@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## Added
+## [0.2.2] - 2023-02-28
+
+### Added
+
 - `-o` argument to `stokescube`
+- Internal API using NamedTuples to track ouputs
+
+### Fixed
+
+- Fixed FITS index bug
 
 ## [0.2.1] - 2023-01-21
 
