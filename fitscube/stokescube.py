@@ -9,7 +9,7 @@ Assumes:
 """
 
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
@@ -18,7 +18,7 @@ def main(
     stokes_I_file: str,
     stokes_Q_file: str,
     stokes_U_file: str,
-    stokes_V_file: str = None,
+    stokes_V_file: Union[str,None] = None,
 ) -> fits.HDUList:
 
     # Read in the data

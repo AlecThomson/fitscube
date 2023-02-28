@@ -10,7 +10,7 @@ Assumes:
 """
 
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import astropy.units as u
 import numpy as np
@@ -18,25 +18,26 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
 
+from collections import namedtuple
+
+InitResult = namedtuple("InitResult", ["data_cube", "header", "idx", "fits_idx", "is_2d"])
 
 def init_cube(
     old_name: str,
     n_chan: int,
-    ignore_freq: bool = False,
-) -> Tuple[np.ndarray, fits.Header, int, bool,]:
+) -> InitResult:
     """Initialize the data cube.
 
     Args:
         old_name (str): Old FITS file name
         n_chan (int): Number of channels
-        ignore_freq (bool, optional): Ignore frequency information. Defaults to False.
 
     Raises:
         KeyError: If 2D and REFFREQ is not in header
         ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        Tuple[np.ndarray, fits.Header, int, bool,]: Output data cube, header, index of frequency axis, and if 2D
+        InitResult: Output data cube, header, index of frequency axis, FITS index, and if 2D
     """
     old_header = fits.getheader(old_name)
     old_data = fits.getdata(old_name)
@@ -50,7 +51,7 @@ def init_cube(
             idx = wcs.axis_type_names[::-1].index("FREQ")
         except ValueError:
             raise ValueError("No FREQ axis found in WCS.")
-        fits_idx = wcs.axis_type_names.index("FREQ")
+        fits_idx = wcs.axis_type_names.index("FREQ") + 1
         print(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
 
     plane_shape = list(old_data.shape)
@@ -60,15 +61,15 @@ def init_cube(
     else:
         cube_shape[idx] = n_chan
 
-    data_cube = np.zeros(cube_shape)
-    return data_cube, old_header, idx, is_2d
+    data_cube = np.zeros(cube_shape) * np.nan
+    return InitResult(data_cube, old_header, idx, fits_idx, is_2d)
 
 
 def parse_freqs(
     file_list: List[str],
-    freq_file: str = None,
-    freq_list: List[float] = None,
-    ignore_freq: bool = False,
+    freq_file: Union[str,None] = None,
+    freq_list: Union[List[float],None] = None,
+    ignore_freq: Union[bool, None] = False,
 ) -> u.Quantity:
     """Parse the frequency information.
 
@@ -130,8 +131,8 @@ def parse_freqs(
 
 def main(
     file_list: List[str],
-    freq_file: str = None,
-    freq_list: List[float] = None,
+    freq_file: Union[str, None] = None,
+    freq_list: Union[List[float], None] = None,
     ignore_freq: bool = False,
 ) -> Tuple[fits.HDUList, u.Quantity]:
     """Combine FITS files into a cube.
@@ -161,10 +162,11 @@ def main(
     ), "Number of frequencies does not match number of images"
 
     # Sort the frequencies
-    freqs = np.sort(freqs)
+    sort_idx = np.argsort(freqs)
+    freqs = freqs[sort_idx]
 
     # Sort the files by frequency
-    file_list = [x for _, x in sorted(zip(freqs, file_list))]
+    file_list = np.array(file_list)[sort_idx].tolist()
 
     for chan, image in enumerate(
         tqdm(
@@ -174,11 +176,15 @@ def main(
     ):
         # init cube
         if chan == 0:
-            data_cube, old_header, idx, is_2d = init_cube(
+            init_res = init_cube(
                 old_name=image,
                 n_chan=len(file_list),
-                ignore_freq=ignore_freq,
             )
+            data_cube = init_res.data_cube
+            old_header = init_res.header
+            idx = init_res.idx
+            fits_idx = init_res.fits_idx
+            is_2d = init_res.is_2d
 
         plane = fits.getdata(image)
         slicer = [slice(None)] * len(plane.shape)
@@ -195,10 +201,6 @@ def main(
 
     new_header = old_header.copy()
     wcs = WCS(old_header)
-    if is_2d:
-        fits_idx = len(wcs.axis_type_names) + 1
-    else:
-        fits_idx = wcs.axis_type_names.index("FREQ")
     new_header["NAXIS"] = len(data_cube.shape)
     new_header[f"NAXIS{fits_idx}"] = len(freqs)
     new_header[f"CRPIX{fits_idx}"] = 1
