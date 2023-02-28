@@ -10,15 +10,17 @@ Assumes:
 
 import os
 from typing import List, Tuple, Union
+
+import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-import numpy as np
+
 
 def main(
     stokes_I_file: str,
     stokes_Q_file: str,
     stokes_U_file: str,
-    stokes_V_file: Union[str,None] = None,
+    stokes_V_file: Union[str, None] = None,
 ) -> fits.HDUList:
 
     # Read in the data
@@ -53,7 +55,11 @@ def main(
         if stokes_I.shape != stokes_V.shape:
             raise ValueError("Stokes I and V data are not the same shape.")
 
-    datas = (stokes_I, stokes_Q, stokes_U) if stokes_V_file is None else (stokes_I, stokes_Q, stokes_U, stokes_V)
+    datas = (
+        (stokes_I, stokes_Q, stokes_U)
+        if stokes_V_file is None
+        else (stokes_I, stokes_Q, stokes_U, stokes_V)
+    )
 
     # Check if Stokes axis is present
     # Create the output header
@@ -68,13 +74,9 @@ def main(
 
     # Create the output cube
     if has_stokes:
-        output_cube = np.concatenate(
-            datas, axis=stokes_idx
-        )
+        output_cube = np.concatenate(datas, axis=stokes_idx)
     else:
-        output_cube = np.array(
-            datas
-        )
+        output_cube = np.array(datas)
 
     output_header[f"CTYPE{stokes_idx}"] = "STOKES"
     output_header[f"CRVAL{stokes_idx}"] = 1
@@ -87,15 +89,22 @@ def main(
 
     return hdul
 
+
 def cli():
     import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stokes_I_file", type=str, help="Stokes I file")
     parser.add_argument("stokes_Q_file", type=str, help="Stokes Q file")
     parser.add_argument("stokes_U_file", type=str, help="Stokes U file")
     parser.add_argument("output_file", type=str, help="Output file")
-    parser.add_argument("-v","--stokes_V_file", type=str, help="Stokes V file")
-    parser.add_argument("-o", "--overwrite", action="store_true", help="Overwrite output file if it exists")
+    parser.add_argument("-v", "--stokes_V_file", type=str, help="Stokes V file")
+    parser.add_argument(
+        "-o",
+        "--overwrite",
+        action="store_true",
+        help="Overwrite output file if it exists",
+    )
 
     args = parser.parse_args()
 
@@ -114,6 +123,7 @@ def cli():
     )
     hdul.writeto(output_file, overwrite=overwrite)
     print(f"Written cube to {output_file}")
+
 
 if __name__ == "__main__":
     cli()

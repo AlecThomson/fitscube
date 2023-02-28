@@ -10,6 +10,7 @@ Assumes:
 """
 
 import os
+from collections import namedtuple
 from typing import List, Tuple, Union
 
 import astropy.units as u
@@ -18,9 +19,10 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
 
-from collections import namedtuple
+InitResult = namedtuple(
+    "InitResult", ["data_cube", "header", "idx", "fits_idx", "is_2d"]
+)
 
-InitResult = namedtuple("InitResult", ["data_cube", "header", "idx", "fits_idx", "is_2d"])
 
 def init_cube(
     old_name: str,
@@ -67,8 +69,8 @@ def init_cube(
 
 def parse_freqs(
     file_list: List[str],
-    freq_file: Union[str,None] = None,
-    freq_list: Union[List[float],None] = None,
+    freq_file: Union[str, None] = None,
+    freq_list: Union[List[float], None] = None,
     ignore_freq: Union[bool, None] = False,
 ) -> u.Quantity:
     """Parse the frequency information.
