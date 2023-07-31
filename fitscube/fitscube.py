@@ -10,8 +10,7 @@ Assumes:
 """
 
 import os
-from collections import namedtuple
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -19,10 +18,29 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
 
-InitResult = namedtuple(
-    "InitResult", ["data_cube", "header", "idx", "fits_idx", "is_2d"]
-)
+class InitResult(NamedTuple):
+    data_cube: np.ndarray
+    """Output data cube"""
+    header: fits.Header
+    """Output header"""
+    idx: int
+    """Index of frequency axis"""
+    fits_idx: int
+    """FITS index of frequency axis"""
+    is_2d: bool
+    """Whether the input is 2D"""
 
+def even_spacing(freqs):
+    freqs = freq.value.astype(np.longdouble)
+    diffs = np.diff(freqs)
+    chans = np.arange(len(freqs))
+    min_diff = np.min(diffs)
+    # Create a new array with the minimum difference
+    new_freqs = np.arange(freqs[0], freqs[-1], min_diff)
+    new_chans = np.arange(len(new_freqs))
+    missing_chan_idx = ~np.isclose(new_freqs[:,None],freqs).any(1)
+    
+    return new_freqs * freq.unit, missing_chan_idx
 
 def init_cube(
     old_name: str,
@@ -131,7 +149,7 @@ def parse_freqs(
     return freqs
 
 
-def main(
+def combine_fits(
     file_list: List[str],
     freq_file: Union[str, None] = None,
     freq_list: Union[List[float], None] = None,
@@ -274,7 +292,7 @@ def cli():
     if overwrite:
         print("Overwriting output files")
 
-    hdul, freqs = main(
+    hdul, freqs = combine_fits(
         file_list=args.file_list,
         freq_file=args.freq_file,
         freq_list=args.freqs,

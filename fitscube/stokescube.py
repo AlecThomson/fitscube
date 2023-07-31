@@ -16,7 +16,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 
-def main(
+def combine_stokes(
     stokes_I_file: str,
     stokes_Q_file: str,
     stokes_U_file: str,
@@ -115,7 +115,7 @@ def cli():
             f"Output file {output_file} already exists. Use --overwrite to overwrite."
         )
 
-    hdul = main(
+    hdul = combine_stokes(
         stokes_I_file=args.stokes_I_file,
         stokes_Q_file=args.stokes_Q_file,
         stokes_U_file=args.stokes_U_file,
