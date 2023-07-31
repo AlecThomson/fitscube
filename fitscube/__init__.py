@@ -1,4 +1,4 @@
 from .fitscube import *
-from .fitscube import main as combine_fits
+from .fitscube import combine_fits
 from .stokescube import *
-from .stokescube import main as combine_stokes
+from .stokescube import combine_stokes

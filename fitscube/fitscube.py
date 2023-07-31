@@ -10,8 +10,7 @@ Assumes:
 """
 
 import os
-from collections import namedtuple
-from typing import List, Tuple, Union
+from typing import List, NamedTuple, Optional, Tuple, Union
 
 import astropy.units as u
 import numpy as np
@@ -19,9 +18,88 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
 
-InitResult = namedtuple(
-    "InitResult", ["data_cube", "header", "idx", "fits_idx", "is_2d"]
-)
+
+class InitResult(NamedTuple):
+    data_cube: np.ndarray
+    """Output data cube"""
+    header: fits.Header
+    """Output header"""
+    idx: int
+    """Index of frequency axis"""
+    fits_idx: int
+    """FITS index of frequency axis"""
+    is_2d: bool
+    """Whether the input is 2D"""
+
+
+def isin_close(element: np.ndarray, test_element: np.ndarray) -> np.ndarray:
+    """Check if element is in test_element, within a tolerance.
+
+    Args:
+        element (np.ndarray): Element to check
+        test_element (np.ndarray): Element to check against
+
+    Returns:
+        np.ndarray: Boolean array
+    """
+    return np.isclose(element[:, None], test_element).any(1)
+
+
+def even_spacing(freqs: u.Quantity) -> Tuple[u.Quantity, np.ndarray]:
+    """Make the frequencies evenly spaced.
+
+    Args:
+        freqs (u.Quantity): Original frequencies
+
+    Returns:
+        Tuple[u.Quantity, np.ndarray]: Evenly spaced frequencies and missing channel indices
+    """    
+    freqs_arr = freqs.value.astype(np.longdouble)
+    diffs = np.diff(freqs_arr)
+    min_diff = np.min(diffs)
+    # Create a new array with the minimum difference
+    new_freqs = np.arange(freqs_arr[0], freqs_arr[-1], min_diff)
+    missing_chan_idx = ~isin_close(new_freqs, freqs_arr)
+    
+    return new_freqs * freqs.unit, missing_chan_idx
+
+
+def create_blank_data(
+    data_cube: np.ndarray,
+    freqs: u.Quantity,
+    idx: int,
+) -> Tuple[Optional[np.ndarray], u.Quantity]:
+    """Create a new data cube with evenly spaced frequencies, and fill in the missing channels with NaNs.
+
+    Args:
+        data_cube (np.ndarray): Original data cube
+        freqs (u.Quantity): Original frequencies
+        idx: Index of frequency axis
+
+    Returns:
+        Tuple[Optional[np.ndarray], u.Quantity]: New data cube and frequencies
+    """
+    new_freqs, missing_chan_idx = even_spacing(freqs)
+    # Check if all frequencies present
+    all_there = isin_close(freqs, new_freqs).all()
+    if not all_there:
+        return None, new_freqs
+
+    # Create a new data cube with the new frequencies
+    new_shape = list(data_cube.shape)
+    new_shape[idx] = len(new_freqs)
+    new_data_cube = np.empty(new_shape) * np.nan
+    for old_chan, freq in enumerate(freqs):
+        new_chans = np.where(np.isclose(new_freqs, freq))[0]
+        assert len(new_chans) == 1, "Too many matching channels"
+        new_chan = new_chans[0]
+        new_slice = [slice(None)] * len(new_shape)
+        new_slice[idx] = new_chan
+        old_slice = [slice(None)] * len(new_shape)
+        old_slice[idx] = old_chan
+        new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
+
+    return new_data_cube, new_freqs
 
 
 def init_cube(
@@ -131,11 +209,12 @@ def parse_freqs(
     return freqs
 
 
-def main(
+def combine_fits(
     file_list: List[str],
     freq_file: Union[str, None] = None,
     freq_list: Union[List[float], None] = None,
     ignore_freq: bool = False,
+    create_blanks: bool = False,
 ) -> Tuple[fits.HDUList, u.Quantity]:
     """Combine FITS files into a cube.
 
@@ -197,6 +276,18 @@ def main(
         data_cube[tuple(slicer)] = plane
     # Write out cubes
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
+    if not even_freq and create_blanks:
+        print("Trying to create a blank cube with evenly spaced frequencies")
+        new_data_cube, new_freqs = create_blank_data(
+            data_cube=data_cube,
+            freqs=freqs,
+            idx=idx,
+        )
+        if new_data_cube is not None:
+            even_freq = True
+            data_cube = new_data_cube
+            freqs = new_freqs
+
     if not even_freq:
         print("WARNING: Frequencies are not evenly spaced")
         print("Use the frequency file to specify the frequencies")
@@ -234,6 +325,11 @@ def cli():
         "--overwrite",
         action="store_true",
         help="Overwrite output file if it exists",
+    )
+    parser.add_argument(
+        "--create-blanks",
+        action="store_true",
+        help="Try to create a blank cube with evenly spaced frequencies",
     )
     # Add options for specifying frequencies
     group = parser.add_mutually_exclusive_group()
@@ -274,11 +370,12 @@ def cli():
     if overwrite:
         print("Overwriting output files")
 
-    hdul, freqs = main(
+    hdul, freqs = combine_fits(
         file_list=args.file_list,
         freq_file=args.freq_file,
         freq_list=args.freqs,
         ignore_freq=args.ignore_freq,
+        create_blanks=args.create_blanks,
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
