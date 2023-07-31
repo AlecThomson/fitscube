@@ -55,11 +55,9 @@ def even_spacing(freqs: u.Quantity) -> Tuple[u.Quantity, np.ndarray]:
     """    
     freqs = freqs.value.astype(np.longdouble)
     diffs = np.diff(freqs)
-    chans = np.arange(len(freqs))
     min_diff = np.min(diffs)
     # Create a new array with the minimum difference
     new_freqs = np.arange(freqs[0], freqs[-1], min_diff)
-    new_chans = np.arange(len(new_freqs))
     missing_chan_idx = ~isin_close(new_freqs, freqs)
     
     return new_freqs * freqs.unit, missing_chan_idx
@@ -99,10 +97,10 @@ def create_blank_data(
         old_slice[idx] = old_chan
         new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
         
-
+    # Make sure all missing channels are NaNs
+    assert np.isnan(new_data_cube[missing_chan_idx]).all(), "Missing channels are not NaNs"
 
     return new_data_cube, new_freqs
-
 
 
 def init_cube(
