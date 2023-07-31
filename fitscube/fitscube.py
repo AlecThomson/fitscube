@@ -330,6 +330,11 @@ def cli():
         action="store_true",
         help="Overwrite output file if it exists",
     )
+    parser.add_argument(
+        "--create-blanks",
+        action="store_true",
+        help="Try to create a blank cube with evenly spaced frequencies",
+    )
     # Add options for specifying frequencies
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -374,6 +379,7 @@ def cli():
         freq_file=args.freq_file,
         freq_list=args.freqs,
         ignore_freq=args.ignore_freq,
+        create_blanks=args.create_blanks,
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
