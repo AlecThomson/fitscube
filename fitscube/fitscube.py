@@ -53,14 +53,14 @@ def even_spacing(freqs: u.Quantity) -> Tuple[u.Quantity, np.ndarray]:
 
     Returns:
         Tuple[u.Quantity, np.ndarray]: Evenly spaced frequencies and missing channel indices
-    """
-    freqs = freqs.value.astype(np.longdouble)
-    diffs = np.diff(freqs)
+    """    
+    freqs_arr = freqs.value.astype(np.longdouble)
+    diffs = np.diff(freqs_arr)
     min_diff = np.min(diffs)
     # Create a new array with the minimum difference
-    new_freqs = np.arange(freqs[0], freqs[-1], min_diff)
-    missing_chan_idx = ~isin_close(new_freqs, freqs)
-
+    new_freqs = np.arange(freqs_arr[0], freqs_arr[-1], min_diff)
+    missing_chan_idx = ~isin_close(new_freqs, freqs_arr)
+    
     return new_freqs * freqs.unit, missing_chan_idx
 
 
