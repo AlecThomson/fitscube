@@ -83,7 +83,7 @@ def create_blank_data(
     # Check if all frequencies present
     all_there = isin_close(freqs, new_freqs).all()
     if not all_there:
-        pass
+        return None, new_freqs
 
     # Create a new data cube with the new frequencies
     new_shape = list(data_cube.shape)
@@ -281,15 +281,20 @@ def combine_fits(
         data_cube[tuple(slicer)] = plane
     # Write out cubes
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
+    if not even_freq and create_blanks:
+        print("Trying to create a blank cube with evenly spaced frequencies")
+        new_data_cube, new_freqs = create_blank_data(
+            data_cube=data_cube,
+            freqs=freqs,
+        )
+        if new_data_cube is not None:
+            even_freq = True
+            data_cube = new_data_cube
+            freqs = new_freqs
+
     if not even_freq:
-        if create_blanks:
-            create_blank_data(
-                data_cube=data_cube,
-                freqs=freqs,
-            )
-        else:
-            print("WARNING: Frequencies are not evenly spaced")
-            print("Use the frequency file to specify the frequencies")
+        print("WARNING: Frequencies are not evenly spaced")
+        print("Use the frequency file to specify the frequencies")
 
     new_header = old_header.copy()
     wcs = WCS(old_header)
