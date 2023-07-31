@@ -10,13 +10,14 @@ Assumes:
 """
 
 import os
-from typing import List, Tuple, Union, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Tuple, Union
 
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
+
 
 class InitResult(NamedTuple):
     data_cube: np.ndarray
@@ -52,20 +53,21 @@ def even_spacing(freqs: u.Quantity) -> Tuple[u.Quantity, np.ndarray]:
 
     Returns:
         Tuple[u.Quantity, np.ndarray]: Evenly spaced frequencies and missing channel indices
-    """    
+    """
     freqs = freqs.value.astype(np.longdouble)
     diffs = np.diff(freqs)
     min_diff = np.min(diffs)
     # Create a new array with the minimum difference
     new_freqs = np.arange(freqs[0], freqs[-1], min_diff)
     missing_chan_idx = ~isin_close(new_freqs, freqs)
-    
+
     return new_freqs * freqs.unit, missing_chan_idx
 
+
 def create_blank_data(
-        data_cube: np.ndarray,
-        freqs: u.Quantity,
-        idx: int,
+    data_cube: np.ndarray,
+    freqs: u.Quantity,
+    idx: int,
 ) -> Tuple[Optional[np.ndarray], u.Quantity]:
     """Create a new data cube with evenly spaced frequencies, and fill in the missing channels with NaNs.
 
@@ -96,9 +98,11 @@ def create_blank_data(
         old_slice = [slice(None)] * len(new_shape)
         old_slice[idx] = old_chan
         new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
-        
+
     # Make sure all missing channels are NaNs
-    assert np.isnan(new_data_cube[missing_chan_idx]).all(), "Missing channels are not NaNs"
+    assert np.isnan(
+        new_data_cube[missing_chan_idx]
+    ).all(), "Missing channels are not NaNs"
 
     return new_data_cube, new_freqs
 
