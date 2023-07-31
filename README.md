@@ -28,18 +28,19 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 Command line:
 ```bash
 fitscube -h
-# usage: fitscube [-h] [-o] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] file_list [file_list ...] out_cube
+# usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] file_list [file_list ...] out_cube
 
-# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid -
-# Frequency is either a WCS axis or in the REFFREQ header keyword - All the relevant information is in the first header of the first image
+# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS
+# axis or in the REFFREQ header keyword - All the relevant information is in the first header of the first image
 
 # positional arguments:
 #   file_list             List of FITS files to combine (in frequency order)
 #   out_cube              Output FITS file
 
-# optional arguments:
+# options:
 #   -h, --help            show this help message and exit
 #   -o, --overwrite       Overwrite output file if it exists
+#   --create-blanks       Try to create a blank cube with evenly spaced frequencies
 #   --freq-file FREQ_FILE
 #                         File containing frequencies in Hz
 #   --freqs FREQS [FREQS ...]
@@ -47,10 +48,10 @@ fitscube -h
 #   --ignore-freq         Ignore frequency information and just stack (probably not what you want)
 
 stokescube -h
-# usage: stokescube [-h] [-v STOKES_V_FILE] [--overwrite] stokes_I_file stokes_Q_file stokes_U_file output_file
+# usage: stokescube [-h] [-v STOKES_V_FILE] [-o] stokes_I_file stokes_Q_file stokes_U_file output_file
 
-# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel
-# grid - All the relevant information is in the first header of the first image
+# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant
+# information is in the first header of the first image
 
 # positional arguments:
 #   stokes_I_file         Stokes I file
@@ -58,11 +59,11 @@ stokescube -h
 #   stokes_U_file         Stokes U file
 #   output_file           Output file
 
-# optional arguments:
+# options:
 #   -h, --help            show this help message and exit
 #   -v STOKES_V_FILE, --stokes_V_file STOKES_V_FILE
 #                         Stokes V file
-#   --overwrite           Overwrite output file if it exists
+#   -o, --overwrite       Overwrite output file if it exists
 ```
 
 Python:
