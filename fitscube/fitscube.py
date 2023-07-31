@@ -286,6 +286,7 @@ def combine_fits(
         new_data_cube, new_freqs = create_blank_data(
             data_cube=data_cube,
             freqs=freqs,
+            idx=idx,
         )
         if new_data_cube is not None:
             even_freq = True
