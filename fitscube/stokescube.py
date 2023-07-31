@@ -22,7 +22,6 @@ def combine_stokes(
     stokes_U_file: str,
     stokes_V_file: Union[str, None] = None,
 ) -> fits.HDUList:
-
     # Read in the data
     stokes_I = fits.getdata(stokes_I_file)
     stokes_Q = fits.getdata(stokes_Q_file)
