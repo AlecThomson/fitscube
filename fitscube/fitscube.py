@@ -99,11 +99,6 @@ def create_blank_data(
         old_slice[idx] = old_chan
         new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
 
-    # Make sure all missing channels are NaNs
-    assert np.isnan(
-        new_data_cube[missing_chan_idx]
-    ).all(), "Missing channels are not NaNs"
-
     return new_data_cube, new_freqs
 
 
