@@ -210,7 +210,7 @@ def parse_freqs(
                 raise KeyError(msg) from e
         else:
             try:
-                freq = WCS(image).spectral.pixel_to_world(0)
+                freq = WCS(header).spectral.pixel_to_world(0)
                 freqs[chan] = freq.to(u.Hz)
             except Exception as e:
                 msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
