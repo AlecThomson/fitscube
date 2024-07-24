@@ -23,6 +23,11 @@ build-backend = "poetry.core.masonry.api"
 src = ["fitscube"]
 
 [[tool.mypy.overrides]]
+module = "fitscube.*"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
 module = "astropy.*"
 ignore_missing_imports = true
 
@@ -78,3 +83,6 @@ messages_control.disable = [
     "missing-function-docstring",
     "wrong-import-position",
 ]
+
+[tool.codespell]
+ignore-words-list = "datas"

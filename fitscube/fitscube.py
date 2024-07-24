@@ -62,14 +62,14 @@ def even_spacing(freqs: u.Quantity) -> tuple[u.Quantity, np.ndarray]:
 
     Returns:
         Tuple[u.Quantity, np.ndarray]: Evenly spaced frequencies and missing channel indices
-    """    
+    """
     freqs_arr = freqs.value.astype(np.longdouble)
     diffs = np.diff(freqs_arr)
     min_diff = np.min(diffs)
     # Create a new array with the minimum difference
     new_freqs = np.arange(freqs_arr[0], freqs_arr[-1], min_diff)
     missing_chan_idx = ~isin_close(new_freqs, freqs_arr)
-    
+
     return new_freqs * freqs.unit, missing_chan_idx
 
 
@@ -178,15 +178,15 @@ def parse_freqs(
     if ignore_freq:
         logger.info("Ignoring frequency information")
         return np.arange(len(file_list)) * u.Hz
-    
+
     if freq_file is not None and freq_list is not None:
         msg = "Must specify either freq_file or freq_list, not both"
         raise ValueError(msg)
-    
+
     if freq_file is not None:
         logger.info("Reading frequencies from %s", freq_file)
         return np.loadtxt(freq_file) * u.Hz
-    
+
     logger.info("Reading frequencies from FITS files")
     freqs = np.arange(len(file_list)) * u.Hz
     for chan, image in enumerate(
@@ -203,20 +203,17 @@ def parse_freqs(
                 freqs[chan] = header["REFFREQ"] * u.Hz
             except KeyError as e:
                 msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
-                raise KeyError(
-                    msg
-                ) from e
+                raise KeyError(msg) from e
         else:
             try:
                 freq = WCS(image).spectral.pixel_to_world(0)
                 freqs[chan] = freq.to(u.Hz)
             except Exception as e:
-                msg = "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
-                raise ValueError(
-                    msg
-                ) from e
+                msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
+                raise ValueError(msg) from e
 
     return freqs
+
 
 def parse_beams(
     file_list: list[str],
@@ -253,12 +250,16 @@ def get_polarisation(header: fits.Header) -> int:
 
     for i, (ctype, naxis) in enumerate(zip(wcs.axis_type_names, wcs.array_shape[::-1])):
         if ctype == "STOKES":
-            assert naxis <= 1, f"Only one polarisation axis is supported - found {naxis}"
+            assert (
+                naxis <= 1
+            ), f"Only one polarisation axis is supported - found {naxis}"
             return i
     return 0
 
-def make_beam_table(beams: Beams, header: fits.Header) -> tuple[fits.BinTableHDU, fits.header]:
 
+def make_beam_table(
+    beams: Beams, header: fits.Header
+) -> tuple[fits.BinTableHDU, fits.header]:
     header["CASAMBM"] = True
     header["COMMENT"] = "The PSF in each image plane varies."
     header["COMMENT"] = "Full beam information is stored in the second FITS extension."
@@ -389,7 +390,7 @@ def combine_fits(
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
 
-    # Hadnle beams
+    # Handle beams
     has_beams = "BMAJ" in fits.getheader(file_list[0])
     if has_beams:
         beams = parse_beams(file_list)
@@ -412,7 +413,7 @@ def cli():
         "file_list",
         nargs="+",
         help="List of FITS files to combine (in frequency order)",
-        type=Path
+        type=Path,
     )
     parser.add_argument("out_cube", help="Output FITS file", type=Path)
     parser.add_argument(
@@ -459,16 +460,12 @@ def cli():
     out_cube = Path(args.out_cube)
     if not overwrite and out_cube.exists():
         msg = f"Output file {out_cube} already exists. Use --overwrite to overwrite."
-        raise FileExistsError(
-            msg
-        )
+        raise FileExistsError(msg)
 
     freqs_file = out_cube.with_suffix(".freqs_Hz.txt")
     if freqs_file.exists() and not overwrite:
         msg = f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
-        raise FileExistsError(
-            msg
-        )
+        raise FileExistsError(msg)
 
     if overwrite:
         logger.info("Overwriting output files")

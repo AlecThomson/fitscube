@@ -7,6 +7,7 @@ Assumes:
 - All the relevant information is in the first header of the first image
 
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -94,7 +95,6 @@ def combine_stokes(
     return fits.HDUList([hdu])
 
 
-
 def cli():
     import argparse
 
@@ -122,9 +122,7 @@ def cli():
     output_file = Path(args.output_file)
     if not overwrite and output_file.exists():
         msg = f"Output file {output_file} already exists. Use --overwrite to overwrite."
-        raise FileExistsError(
-            msg
-        )
+        raise FileExistsError(msg)
 
     hdul = combine_stokes(
         stokes_I_file=args.stokes_I_file,

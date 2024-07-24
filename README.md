@@ -1,11 +1,19 @@
 # FITSCUBE
 
 From the [wsclean](https://wsclean.readthedocs.io/) docs:
-> WSClean does not output these images in a normal “imaging cube” like CASA does, i.e., a single fits file with several images in it. For now I’ve decided not to implement this (one of the reasons for this is that information about the synthesized beam is not properly stored in a multi-frequency fits file). One has of course the option to combine the output manually, e.g. with a simple Python script.
 
-This is a simple Python script to combine (single-frequency or single-Stokes) FITS images manually.
+> WSClean does not output these images in a normal “imaging cube” like CASA
+> does, i.e., a single fits file with several images in it. For now I’ve decided
+> not to implement this (one of the reasons for this is that information about
+> the synthesized beam is not properly stored in a multi-frequency fits file).
+> One has of course the option to combine the output manually, e.g. with a
+> simple Python script.
+
+This is a simple Python script to combine (single-frequency or single-Stokes)
+FITS images manually.
 
 Current assumptions:
+
 - All files have the same WCS
 - All files have the same shape / pixel grid
 - Frequency is either a WCS axis or in the REFFREQ header keyword
@@ -14,11 +22,13 @@ Current assumptions:
 ## Installation
 
 Install from PyPI (stable):
+
 ```
 pip install fitscube
 ```
 
 Or, onstall from this git repo (latest):
+
 ```bash
 pip install git+https://github.com/AlecThomson/fitscube.git
 ```
@@ -26,6 +36,7 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 ## Usage
 
 Command line:
+
 ```bash
 fitscube -h
 # usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] file_list [file_list ...] out_cube
@@ -67,30 +78,34 @@ stokescube -h
 ```
 
 Python:
+
 ```python
 from fitscube import combine_fits, combine_stokes
 
 hdu_list, frequencies = combine_fits(
-    ['file1.fits', 'file2.fits', 'file3.fits'],
+    ["file1.fits", "file2.fits", "file3.fits"],
 )
 hdus_list = combine_stokes(
-    'stokes_I.fits',
-    'stokes_Q.fits',
-    'stokes_U.fits',
+    "stokes_I.fits",
+    "stokes_Q.fits",
+    "stokes_U.fits",
 )
-
 ```
 
 ## Convolving to a common resolution
+
 See [RACS-Tools](https://github.com/AlecThomson/RACS-tools).
 
 ## License
+
 MIT
 
 ## Contributing
+
 Contributions are welcome. Please open an issue or pull request.
 
 ## TODO
+
 - [ ] Add support for non-frequency axes
 - [ ] Add tracking of the PSF in header / beamtable
 - [ ] Add convolution to a common resolution via RACS-Tools
