@@ -261,7 +261,7 @@ def get_polarisation(header: fits.Header) -> int:
     wcs = WCS(header)
 
     for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, wcs.array_shape[::-1]), wcs.wcs.crpix
+        zip(wcs.axis_type_names, wcs.array_shape[::-1], wcs.wcs.crpix)
     ):
         if ctype == "STOKES":
             assert (
