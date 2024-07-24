@@ -259,7 +259,7 @@ def get_polarisation(header: fits.Header) -> int:
 
 def make_beam_table(
     beams: Beams, header: fits.Header
-) -> tuple[fits.BinTableHDU, fits.header]:
+) -> tuple[fits.BinTableHDU, fits.Header]:
     header["CASAMBM"] = True
     header["COMMENT"] = "The PSF in each image plane varies."
     header["COMMENT"] = "Full beam information is stored in the second FITS extension."
