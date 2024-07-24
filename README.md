@@ -17,7 +17,7 @@
 
 <!-- prettier-ignore-start -->
 [codecov-link]:             https://codecov.io/gh/AlecThomson/fitscube
-[codecov-badge]:            https://codecov.io/gh/AlecThomson/fitscube/graph/badge.svg?token=7EARBRN20D
+[codecov-badge]:            https://codecov.io/gh/AlecThomson/fitscube/graph/badge.svg?token=RNXELOOH1Z
 [actions-badge]:            https://github.com/AlecThomson/fitscube/workflows/CI/badge.svg
 [actions-link]:             https://github.com/AlecThomson/fitscube/actions
 [conda-badge]:              https://img.shields.io/conda/vn/conda-forge/fitscube
