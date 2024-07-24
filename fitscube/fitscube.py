@@ -260,12 +260,14 @@ def get_polarisation(header: fits.Header) -> int:
     """
     wcs = WCS(header)
 
-    for i, (ctype, naxis) in enumerate(zip(wcs.axis_type_names, wcs.array_shape[::-1])):
+    for _, (ctype, naxis, crpix) in enumerate(
+        zip(wcs.axis_type_names, wcs.array_shape[::-1]), wcs.wcs.crpix
+    ):
         if ctype == "STOKES":
             assert (
                 naxis <= 1
             ), f"Only one polarisation axis is supported - found {naxis}"
-            return i
+            return int(crpix - 1)
     return 0
 
 
