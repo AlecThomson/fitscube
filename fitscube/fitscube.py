@@ -418,7 +418,7 @@ def combine_fits(
         beams = parse_beams(file_list)
         beam_table, new_header = make_beam_table(beams, new_header)
 
-    hdu = fits.ImageHDU(data_cube, header=new_header)
+    hdu = fits.PrimaryHDU(data_cube, header=new_header)
     hdu_python_list = [hdu]
     if has_beams:
         hdu_python_list.append(beam_table)
