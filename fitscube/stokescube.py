@@ -9,7 +9,7 @@ Assumes:
 """
 
 import os
-from typing import List, Tuple, Union
+from typing import Union
 
 import numpy as np
 from astropy.io import fits
