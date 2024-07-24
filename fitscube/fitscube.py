@@ -9,14 +9,20 @@ Assumes:
 
 """
 
+from __future__ import annotations
+
 import os
-from typing import List, NamedTuple, Optional, Tuple, Union
+from pathlib import Path
+from typing import NamedTuple
 
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
+from astropy.table import Table
 from astropy.wcs import WCS
 from tqdm.auto import tqdm
+from radio_beam import Beam, Beams
+from radio_beam.beam import NoBeamException
 
 
 class InitResult(NamedTuple):
@@ -45,7 +51,7 @@ def isin_close(element: np.ndarray, test_element: np.ndarray) -> np.ndarray:
     return np.isclose(element[:, None], test_element).any(1)
 
 
-def even_spacing(freqs: u.Quantity) -> Tuple[u.Quantity, np.ndarray]:
+def even_spacing(freqs: u.Quantity) -> tuple[u.Quantity, np.ndarray]:
     """Make the frequencies evenly spaced.
 
     Args:
@@ -68,7 +74,7 @@ def create_blank_data(
     data_cube: np.ndarray,
     freqs: u.Quantity,
     idx: int,
-) -> Tuple[Optional[np.ndarray], u.Quantity]:
+) -> tuple[np.ndarray | None, u.Quantity]:
     """Create a new data cube with evenly spaced frequencies, and fill in the missing channels with NaNs.
 
     Args:
@@ -103,7 +109,7 @@ def create_blank_data(
 
 
 def init_cube(
-    old_name: str,
+    old_name: Path,
     n_chan: int,
 ) -> InitResult:
     """Initialize the data cube.
@@ -146,10 +152,10 @@ def init_cube(
 
 
 def parse_freqs(
-    file_list: List[str],
-    freq_file: Union[str, None] = None,
-    freq_list: Union[List[float], None] = None,
-    ignore_freq: Union[bool, None] = False,
+    file_list: list[str],
+    freq_file: str | None = None,
+    freq_list: list[float] | None = None,
+    ignore_freq: bool | None = False,
 ) -> u.Quantity:
     """Parse the frequency information.
 
@@ -168,54 +174,125 @@ def parse_freqs(
     if ignore_freq:
         print("Ignoring frequency information")
         return np.arange(len(file_list)) * u.Hz
-    # if freq_file is None and freq_list is None:
-    #     raise ValueError("Must specify either freq_file or freq_list")
+    
     if freq_file is not None and freq_list is not None:
         raise ValueError("Must specify either freq_file or freq_list, not both")
+    
     if freq_file is not None:
         print(f"Reading frequencies from {freq_file}")
-        freqs = np.loadtxt(freq_file) * u.Hz
-    elif freq_list is not None:
-        print(f"Using list of specified frequencies")
-        freqs = np.array(freq_list) * u.Hz
-    else:
-        print("Reading frequencies from FITS files")
-        freqs = np.arange(len(file_list)) * u.Hz
-        for chan, image in enumerate(
-            tqdm(
-                file_list,
-                desc="Extracting frequencies",
-            )
-        ):
-            plane = fits.getdata(image)
-            is_2d = len(plane.shape) == 2
-            header = fits.getheader(image)
-            if is_2d:
-                try:
-                    freqs[chan] = header["REFFREQ"] * u.Hz
-                except KeyError:
-                    raise KeyError(
-                        "REFFREQ not in header. Cannot combine 2D images without frequency information."
-                    )
-            else:
-                try:
-                    freq = WCS(image).spectral.pixel_to_world(0)
-                    freqs[chan] = freq.to(u.Hz)
-                except Exception as e:
-                    raise ValueError(
-                        "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
-                    ) from e
+        return np.loadtxt(freq_file) * u.Hz
+    
+    print("Reading frequencies from FITS files")
+    freqs = np.arange(len(file_list)) * u.Hz
+    for chan, image in enumerate(
+        tqdm(
+            file_list,
+            desc="Extracting frequencies",
+        )
+    ):
+        plane = fits.getdata(image)
+        is_2d = len(plane.shape) == 2
+        header = fits.getheader(image)
+        if is_2d:
+            try:
+                freqs[chan] = header["REFFREQ"] * u.Hz
+            except KeyError:
+                raise KeyError(
+                    "REFFREQ not in header. Cannot combine 2D images without frequency information."
+                )
+        else:
+            try:
+                freq = WCS(image).spectral.pixel_to_world(0)
+                freqs[chan] = freq.to(u.Hz)
+            except Exception as e:
+                raise ValueError(
+                    "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
+                ) from e
 
     return freqs
 
+def parse_beams(
+    file_list: list[str],
+) -> Beams:
+    """Parse the beam information.
+
+    Args:
+        file_list (List[str]): List of FITS files
+
+    Returns:
+        Beams: Beams object
+    """
+    beam_list: list[Beam] = []
+    for image in tqdm(
+        file_list,
+        desc="Extracting beams",
+    ):
+        header = fits.getheader(image)
+        try:
+            beam = Beam.from_fits_header(header)
+        except NoBeamException:
+            beam = Beam(major=np.nan * u.deg, minor=np.nan * u.deg, pa=np.nan * u.deg)
+        beam_list.append(beam)
+
+    beams = Beams(
+        major=[beam.major.to(u.deg).value for beam in beam_list] * u.deg,
+        minor=[beam.minor.to(u.deg).value for beam in beam_list] * u.deg,
+        pa=[beam.pa.to(u.deg).value for beam in beam_list] * u.deg,
+    )
+
+    return beams
+
+def get_polarisation(header: fits.Header) -> int:
+    wcs = WCS(header)
+
+    for i, (ctype, naxis) in enumerate(zip(wcs.axis_type_names, wcs.array_shape[::-1])):
+        if ctype == "STOKES":
+            assert naxis <= 1, f"Only one polarisation axis is supported - found {naxis}"
+            return i
+    else:
+        return 0
+
+def make_beam_table(beams: Beams, header: fits.Header) -> tuple[fits.BinTableHDU, fits.header]:
+
+    header["CASAMBM"] = True
+    header["COMMENT"] = "The PSF in each image plane varies."
+    header["COMMENT"] = "Full beam information is stored in the second FITS extension."
+    nchan = len(beams.major)
+    chans = np.arange(nchan)
+    pol = get_polarisation(header)
+    pols = np.ones(nchan, dtype=int) * pol
+    tiny = np.finfo(np.float32).tiny
+    beam_table = Table(
+        data=[
+            # Replace NaNs with np.finfo(np.float32).tiny - this is the smallest
+            # positive number that can be represented in float32
+            # We use this to keep CASA happy
+            np.nan_to_num(beams.major.to(u.arcsec), nan=tiny * u.arcsec),
+            np.nan_to_num(beams.minor.to(u.arcsec), nan=tiny * u.arcsec),
+            np.nan_to_num(beams.pa.to(u.deg), nan=tiny * u.deg),
+            chans,
+            pols,
+        ],
+        names=["BMAJ", "BMIN", "BPA", "CHAN", "POL"],
+        dtype=["f4", "f4", "f4", "i4", "i4"],
+    )
+    header["COMMENT"] = f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
+    tab_hdu = fits.table_to_hdu(beam_table)
+    tab_header = tab_hdu.header
+    tab_header["EXTNAME"] = "BEAMS"
+    tab_header["NCHAN"] = nchan
+    tab_header["NPOL"] = 1  # Only one pol for now
+
+    return tab_hdu, header
+
 
 def combine_fits(
-    file_list: List[str],
-    freq_file: Union[str, None] = None,
-    freq_list: Union[List[float], None] = None,
+    file_list: list[Path],
+    freq_file: Path | None = None,
+    freq_list: list[float] | None = None,
     ignore_freq: bool = False,
     create_blanks: bool = False,
-) -> Tuple[fits.HDUList, u.Quantity]:
+) -> tuple[fits.HDUList, u.Quantity]:
     """Combine FITS files into a cube.
 
     Args:
@@ -274,6 +351,7 @@ def combine_fits(
         else:
             slicer[idx] = chan
         data_cube[tuple(slicer)] = plane
+
     # Write out cubes
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
     if not even_freq and create_blanks:
@@ -293,7 +371,6 @@ def combine_fits(
         print("Use the frequency file to specify the frequencies")
 
     new_header = old_header.copy()
-    wcs = WCS(old_header)
     new_header["NAXIS"] = len(data_cube.shape)
     new_header[f"NAXIS{fits_idx}"] = len(freqs)
     new_header[f"CRPIX{fits_idx}"] = 1
@@ -301,11 +378,23 @@ def combine_fits(
     new_header[f"CDELT{fits_idx}"] = np.diff(freqs).mean().value
     new_header[f"CUNIT{fits_idx}"] = "Hz"
     new_header[f"CTYPE{fits_idx}"] = "FREQ"
-    if ignore_freq:
-        new_header["HISTORY"] = "Frequency axis is not meaningful"
+    if ignore_freq or not even_freq:
+        new_header[f"CDELT{fits_idx}"] = 1
+        del new_header[f"CUNIT{fits_idx}"]
+        new_header[f"CTYPE{fits_idx}"] = "CHAN"
+        new_header[f"CRVAL{fits_idx}"] = 1
+
+    # Hadnle beams
+    has_beams = "BMAJ" in fits.getheader(file_list[0])
+    if has_beams:
+        beams = parse_beams(file_list)
+        beam_table, new_header = make_beam_table(beams, new_header)
 
     hdu = fits.PrimaryHDU(data_cube, header=new_header)
     hdul = fits.HDUList([hdu])
+
+    if has_beams:
+        hdul.append(beam_table)
 
     return hdul, freqs
 
@@ -318,8 +407,9 @@ def cli():
         "file_list",
         nargs="+",
         help="List of FITS files to combine (in frequency order)",
+        type=Path
     )
-    parser.add_argument("out_cube", help="Output FITS file")
+    parser.add_argument("out_cube", help="Output FITS file", type=Path)
     parser.add_argument(
         "-o",
         "--overwrite",
@@ -336,7 +426,7 @@ def cli():
     group.add_argument(
         "--freq-file",
         help="File containing frequencies in Hz",
-        type=str,
+        type=Path,
         default=None,
     )
     group.add_argument(
