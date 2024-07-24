@@ -11,6 +11,7 @@ Assumes:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import NamedTuple
 
@@ -90,7 +91,7 @@ def create_blank_data(
     Returns:
         Tuple[Optional[np.ndarray], u.Quantity]: New data cube and frequencies
     """
-    new_freqs, missing_chan_idx = even_spacing(freqs)
+    new_freqs, _ = even_spacing(freqs)
     # Check if all frequencies present
     all_there = isin_close(freqs, new_freqs).all()
     if not all_there:
@@ -103,10 +104,10 @@ def create_blank_data(
     for old_chan, freq in enumerate(freqs):
         new_chans = np.where(np.isclose(new_freqs, freq))[0]
         assert len(new_chans) == 1, "Too many matching channels"
-        new_chan = new_chans[0]
-        new_slice = [slice(None)] * len(new_shape)
+        new_chan = int(new_chans[0])
+        new_slice: list[slice | int] = [slice(None)] * len(new_shape)
         new_slice[idx] = new_chan
-        old_slice = [slice(None)] * len(new_shape)
+        old_slice: list[slice | int] = [slice(None)] * len(new_shape)
         old_slice[idx] = old_chan
         new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
 
@@ -158,8 +159,8 @@ def init_cube(
 
 
 def parse_freqs(
-    file_list: list[str],
-    freq_file: str | None = None,
+    file_list: list[Path],
+    freq_file: Path | None = None,
     freq_list: list[float] | None = None,
     ignore_freq: bool | None = False,
 ) -> u.Quantity:
@@ -220,7 +221,7 @@ def parse_freqs(
 
 
 def parse_beams(
-    file_list: list[str],
+    file_list: list[Path],
 ) -> Beams:
     """Parse the beam information.
 
@@ -357,26 +358,25 @@ def combine_fits(
     # Sort the files by frequency
     file_list = np.array(file_list)[sort_idx].tolist()
 
+    # Initialize the data cube
+    init_res = init_cube(
+        old_name=file_list[0],
+        n_chan=len(file_list),
+    )
+    data_cube = init_res.data_cube
+    old_header = init_res.header
+    idx = init_res.idx
+    fits_idx = init_res.fits_idx
+    is_2d = init_res.is_2d
+
     for chan, image in enumerate(
         tqdm(
             file_list,
             desc="Reading channel image",
         )
     ):
-        # init cube
-        if chan == 0:
-            init_res = init_cube(
-                old_name=image,
-                n_chan=len(file_list),
-            )
-            data_cube = init_res.data_cube
-            old_header = init_res.header
-            idx = init_res.idx
-            fits_idx = init_res.fits_idx
-            is_2d = init_res.is_2d
-
         plane = fits.getdata(image)
-        slicer = [slice(None)] * len(plane.shape)
+        slicer: list[slice | int] = [slice(None)] * len(plane.shape)
         if is_2d:
             slicer.insert(0, chan)
         else:
@@ -430,10 +430,8 @@ def combine_fits(
     return hdul, freqs
 
 
-def cli():
+def cli() -> None:
     """Command-line interface."""
-    import argparse
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "file_list",

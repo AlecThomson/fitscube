@@ -10,29 +10,30 @@ Assumes:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from fitscube.fitscube import logger
+from fitscube.combine_fits import logger
 from fitscube.logging import set_verbosity
 
 
 def combine_stokes(
-    stokes_I_file: Path,
-    stokes_Q_file: Path,
-    stokes_U_file: Path,
-    stokes_V_file: Path | None = None,
+    stokes_i_file: Path,
+    stokes_q_file: Path,
+    stokes_u_file: Path,
+    stokes_v_file: Path | None = None,
 ) -> fits.HDUList:
     """Combine single-Stokes FITS files into a Stokes cube.
 
     Args:
-        stokes_I_file (Path): Path to Stokes I file
-        stokes_Q_file (Path): Path to Stokes Q file
-        stokes_U_file (Path): Path to Stokes U file
-        stokes_V_file (Path | None, optional): Path to the Stokes V file. Defaults to None.
+        stokes_i_file (Path): Path to Stokes I file
+        stokes_q_file (Path): Path to Stokes Q file
+        stokes_u_file (Path): Path to Stokes U file
+        stokes_v_file (Path | None, optional): Path to the Stokes V file. Defaults to None.
 
     Raises:
         ValueError: If the headers are not the same for Stokes I and Q
@@ -46,50 +47,50 @@ def combine_stokes(
         fits.HDUList: The combined Stokes cube
     """
     # Read in the data
-    stokes_I = fits.getdata(stokes_I_file)
-    stokes_Q = fits.getdata(stokes_Q_file)
-    stokes_U = fits.getdata(stokes_U_file)
-    if stokes_V_file is not None:
-        stokes_V = fits.getdata(stokes_V_file)
+    stokes_i = fits.getdata(stokes_i_file)
+    stokes_q = fits.getdata(stokes_q_file)
+    stokes_u = fits.getdata(stokes_u_file)
+    stokes_v = fits.getdata(stokes_v_file) if stokes_v_file is not None else None
 
     # Get the header
-    stokes_I_header = fits.getheader(stokes_I_file)
-    stokes_Q_header = fits.getheader(stokes_Q_file)
-    stokes_U_header = fits.getheader(stokes_U_file)
-    if stokes_V_file is not None:
-        stokes_V_header = fits.getheader(stokes_V_file)
+    stokes_i_header = fits.getheader(stokes_i_file)
+    stokes_q_header = fits.getheader(stokes_q_file)
+    stokes_u_header = fits.getheader(stokes_u_file)
+    stokes_v_header = (
+        fits.getheader(stokes_v_file) if stokes_v_file is not None else None
+    )
 
     # Check that the headers are the same
-    if stokes_I_header != stokes_Q_header:
+    if stokes_i_header != stokes_q_header:
         msg = "Stokes I and Q headers are not the same."
         raise ValueError(msg)
-    if stokes_I_header != stokes_U_header:
+    if stokes_i_header != stokes_u_header:
         msg = "Stokes I and U headers are not the same."
         raise ValueError(msg)
-    if stokes_V_file is not None and stokes_I_header != stokes_V_header:
+    if stokes_v_file is not None and stokes_i_header != stokes_v_header:
         msg = "Stokes I and V headers are not the same."
         raise ValueError(msg)
 
     # Check that the data are the same shape
-    if stokes_I.shape != stokes_Q.shape:
+    if stokes_i.shape != stokes_q.shape:
         msg = "Stokes I and Q data are not the same shape."
         raise ValueError(msg)
-    if stokes_I.shape != stokes_U.shape:
+    if stokes_i.shape != stokes_u.shape:
         msg = "Stokes I and U data are not the same shape."
         raise ValueError(msg)
-    if stokes_V_file is not None and stokes_I.shape != stokes_V.shape:
+    if stokes_v_file is not None and stokes_i.shape != stokes_v.shape:
         msg = "Stokes I and V data are not the same shape."
         raise ValueError(msg)
 
     datas = (
-        (stokes_I, stokes_Q, stokes_U)
-        if stokes_V_file is None
-        else (stokes_I, stokes_Q, stokes_U, stokes_V)
+        (stokes_i, stokes_q, stokes_u)
+        if stokes_v_file is None
+        else (stokes_i, stokes_q, stokes_u, stokes_v)
     )
 
     # Check if Stokes axis is present
     # Create the output header
-    output_header = stokes_I_header.copy()
+    output_header = stokes_i_header.copy()
     # Check if Stokes axis is already present
     wcs = WCS(output_header)
     has_stokes = "STOKES" in wcs.axis_type_names
@@ -114,16 +115,14 @@ def combine_stokes(
     return fits.HDUList([hdu])
 
 
-def cli():
+def cli() -> None:
     """Command-line interface."""
-    import argparse
-
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stokes_I_file", type=Path, help="Stokes I file")
-    parser.add_argument("stokes_Q_file", type=Path, help="Stokes Q file")
-    parser.add_argument("stokes_U_file", type=Path, help="Stokes U file")
+    parser.add_argument("stokes_i_file", type=Path, help="Stokes I file")
+    parser.add_argument("stokes_q_file", type=Path, help="Stokes Q file")
+    parser.add_argument("stokes_u_file", type=Path, help="Stokes U file")
     parser.add_argument("output_file", type=Path, help="Output file")
-    parser.add_argument("-V", "--stokes_V_file", type=Path, help="Stokes V file")
+    parser.add_argument("-V", "--stokes_v_file", type=Path, help="Stokes V file")
     parser.add_argument(
         "-o",
         "--overwrite",
@@ -145,13 +144,13 @@ def cli():
         raise FileExistsError(msg)
 
     hdul = combine_stokes(
-        stokes_I_file=args.stokes_I_file,
-        stokes_Q_file=args.stokes_Q_file,
-        stokes_U_file=args.stokes_U_file,
-        stokes_V_file=args.stokes_V_file,
+        stokes_i_file=args.stokes_i_file,
+        stokes_q_file=args.stokes_q_file,
+        stokes_u_file=args.stokes_u_file,
+        stokes_v_file=args.stokes_v_file,
     )
     hdul.writeto(output_file, overwrite=overwrite)
-    logger.info(f"Written cube to {output_file}")
+    logger.info("Written cube to %s", output_file)
 
 
 if __name__ == "__main__":
