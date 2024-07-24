@@ -26,6 +26,25 @@ def combine_stokes(
     stokes_U_file: Path,
     stokes_V_file: Path | None = None,
 ) -> fits.HDUList:
+    """Combine single-Stokes FITS files into a Stokes cube.
+
+    Args:
+        stokes_I_file (Path): Path to Stokes I file
+        stokes_Q_file (Path): Path to Stokes Q file
+        stokes_U_file (Path): Path to Stokes U file
+        stokes_V_file (Path | None, optional): Path to the Stokes V file. Defaults to None.
+
+    Raises:
+        ValueError: If the headers are not the same for Stokes I and Q
+        ValueError: If the data are not the same shape for Stokes I and Q
+        ValueError: If the headers are not the same for Stokes I and U
+        ValueError: If the data are not the same shape for Stokes I and U
+        ValueError: If the headers are not the same for Stokes I and V
+        ValueError: If the data are not the same shape for Stokes I and V
+
+    Returns:
+        fits.HDUList: The combined Stokes cube
+    """
     # Read in the data
     stokes_I = fits.getdata(stokes_I_file)
     stokes_Q = fits.getdata(stokes_Q_file)
@@ -96,6 +115,7 @@ def combine_stokes(
 
 
 def cli():
+    """Command-line interface."""
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)

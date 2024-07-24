@@ -60,6 +60,7 @@ extend-select = [
     "EXE",      # flake8-executable
     "NPY",      # NumPy specific rules
     "PD",       # pandas-vet
+    "D",        # flake8-docstrings
 ]
 ignore = [
     "PLR09",    # Too many <...>
@@ -69,6 +70,9 @@ ignore = [
 isort.required-imports = ["from __future__ import annotations"]
 # Uncomment if using a _compat.typing backport
 # typing-modules = ["fitscube._compat.typing"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]

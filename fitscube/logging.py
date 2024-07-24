@@ -1,3 +1,5 @@
+"""Logging utilities for fitscube."""
+
 from __future__ import annotations
 
 import logging
@@ -9,7 +11,7 @@ logging.captureWarnings(True)
 
 
 def setup_logger() -> logging.Logger:
-    """Setup a logger
+    """Setup a logger.
 
     Args:
         filename (Optional[str], optional): Output log file. Defaults to None.
@@ -32,7 +34,7 @@ def setup_logger() -> logging.Logger:
 
 
 def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
-    """Set the logger verbosity
+    """Set the logger verbosity.
 
     Args:
         logger (logging.Logger): The logger

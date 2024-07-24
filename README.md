@@ -39,15 +39,15 @@ Command line:
 
 ```bash
 fitscube -h
-# usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] file_list [file_list ...] out_cube
-
-# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS
-# axis or in the REFFREQ header keyword - All the relevant information is in the first header of the first image
-
+# usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] [-v] file_list [file_list ...] out_cube
+#
+# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS axis or  in the REFFREQ header
+# keyword - All the relevant information is in the first header of the first image
+#
 # positional arguments:
 #   file_list             List of FITS files to combine (in frequency order)
 #   out_cube              Output FITS file
-
+#
 # options:
 #   -h, --help            show this help message and exit
 #   -o, --overwrite       Overwrite output file if it exists
@@ -57,24 +57,26 @@ fitscube -h
 #   --freqs FREQS [FREQS ...]
 #                         List of frequencies in Hz
 #   --ignore-freq         Ignore frequency information and just stack (probably not what you want)
+#   -v, --verbosity       Increase output verbosity
 
 stokescube -h
-# usage: stokescube [-h] [-v STOKES_V_FILE] [-o] stokes_I_file stokes_Q_file stokes_U_file output_file
-
-# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant
-# information is in the first header of the first image
-
+# usage: stokescube [-h] [-V STOKES_V_FILE] [-o] [-v] stokes_I_file stokes_Q_file stokes_U_file output_file
+#
+# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant information # is in the first header of
+# the first image
+#
 # positional arguments:
 #   stokes_I_file         Stokes I file
 #   stokes_Q_file         Stokes Q file
 #   stokes_U_file         Stokes U file
 #   output_file           Output file
-
+#
 # options:
 #   -h, --help            show this help message and exit
-#   -v STOKES_V_FILE, --stokes_V_file STOKES_V_FILE
+#   -V STOKES_V_FILE, --stokes_V_file STOKES_V_FILE
 #                         Stokes V file
 #   -o, --overwrite       Overwrite output file if it exists
+#   -v, --verbosity       Increase output verbosity
 ```
 
 Python:
@@ -107,5 +109,4 @@ Contributions are welcome. Please open an issue or pull request.
 ## TODO
 
 - [ ] Add support for non-frequency axes
-- [ ] Add tracking of the PSF in header / beamtable
 - [ ] Add convolution to a common resolution via RACS-Tools

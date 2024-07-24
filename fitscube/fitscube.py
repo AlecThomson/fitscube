@@ -29,6 +29,8 @@ logger = setup_logger()
 
 
 class InitResult(NamedTuple):
+    """Initialization result."""
+
     data_cube: np.ndarray
     """Output data cube"""
     header: fits.Header
@@ -164,16 +166,18 @@ def parse_freqs(
     """Parse the frequency information.
 
     Args:
-        freq_file (str, optional): File containing frequencies. Defaults to None.
-        freqs (List[float], optional): List of frequencies. Defaults to None.
-        ignore_freq (bool, optional): Ignore frequency information. Defaults to False.
+        file_list (list[str]): List of FITS files
+        freq_file (str | None, optional): File containing frequnecies. Defaults to None.
+        freq_list (list[float] | None, optional): List of frequencies. Defaults to None.
+        ignore_freq (bool | None, optional): Ignore frequency information. Defaults to False.
 
     Raises:
-        ValueError: If freq_file and freqs are both None
-        ValueError: If freq_file and freqs are both not None
+        ValueError: If both freq_file and freq_list are specified
+        KeyError: If 2D and REFFREQ is not in header
+        ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        List[float]: List of frequencies
+        u.Quantity: List of frequencies
     """
     if ignore_freq:
         logger.info("Ignoring frequency information")
@@ -246,6 +250,14 @@ def parse_beams(
 
 
 def get_polarisation(header: fits.Header) -> int:
+    """Get the polarisation axis.
+
+    Args:
+        header (fits.Header): Primary header
+
+    Returns:
+        int: Polarisation axis (in FITS)
+    """
     wcs = WCS(header)
 
     for i, (ctype, naxis) in enumerate(zip(wcs.axis_type_names, wcs.array_shape[::-1])):
@@ -260,6 +272,15 @@ def get_polarisation(header: fits.Header) -> int:
 def make_beam_table(
     beams: Beams, header: fits.Header
 ) -> tuple[fits.BinTableHDU, fits.Header]:
+    """Make a beam table.
+
+    Args:
+        beams (Beams): Beams object
+        header (fits.Header): Primary header
+
+    Returns:
+        tuple[fits.BinTableHDU, fits.Header]: Beam table and updated header
+    """
     header["CASAMBM"] = True
     header["COMMENT"] = "The PSF in each image plane varies."
     header["COMMENT"] = "Full beam information is stored in the second FITS extension."
@@ -302,15 +323,16 @@ def combine_fits(
     """Combine FITS files into a cube.
 
     Args:
-        file_list (List[str]): List of FITS files to combine
-        overwrite (bool, optional): Whether to overwrite output cube. Defaults to False.
+        file_list (list[Path]): List of FITS files to combine
+        freq_file (Path | None, optional): Frequency file. Defaults to None.
+        freq_list (list[float] | None, optional): List of frequencies. Defaults to None.
+        ignore_freq (bool, optional): Ignore frequency information. Defaults to False.
+        create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
 
-    Raises:
-        FileExistsError: If output file exists and overwrite is False.
+    Returns:
+        tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
     """
-
     # TODO: Check that all files have the same WCS
-    # TODO: Check if PSF is in header, and then add it to the output header / beamtable
 
     n_images = len(file_list)
 
@@ -406,6 +428,7 @@ def combine_fits(
 
 
 def cli():
+    """Command-line interface."""
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
