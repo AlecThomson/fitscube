@@ -1,5 +1,37 @@
 # FITSCUBE
 
+[![Actions Status][actions-badge]][actions-link]
+[![Codecov Status][codecov-badge]][codecov-link]
+
+<!-- [![Documentation Status][rtd-badge]][rtd-link] -->
+
+[![PyPI version][pypi-version]][pypi-link]
+
+<!-- [![Conda-Forge][conda-badge]][conda-link] -->
+
+[![PyPI platforms][pypi-platforms]][pypi-link]
+
+<!-- [![GitHub Discussion][github-discussions-badge]][github-discussions-link] -->
+
+<!-- SPHINX-START -->
+
+<!-- prettier-ignore-start -->
+[codecov-link]:             https://codecov.io/gh/AlecThomson/fitscube
+[codecov-badge]:            https://codecov.io/gh/AlecThomson/fitscube/graph/badge.svg?token=7EARBRN20D
+[actions-badge]:            https://github.com/AlecThomson/fitscube/workflows/CI/badge.svg
+[actions-link]:             https://github.com/AlecThomson/fitscube/actions
+[conda-badge]:              https://img.shields.io/conda/vn/conda-forge/fitscube
+[conda-link]:               https://github.com/conda-forge/fitscube-feedstock
+[github-discussions-badge]: https://img.shields.io/static/v1?label=Discussions&message=Ask&color=blue&logo=github
+[github-discussions-link]:  https://github.com/AlecThomson/fitscube/discussions
+[pypi-link]:                https://pypi.org/project/fitscube/
+[pypi-platforms]:           https://img.shields.io/pypi/pyversions/fitscube
+[pypi-version]:             https://img.shields.io/pypi/v/fitscube
+[rtd-badge]:                https://readthedocs.org/projects/fitscube/badge/?version=latest
+[rtd-link]:                 https://fitscube.readthedocs.io/en/latest/?badge=latest
+
+<!-- prettier-ignore-end -->
+
 From the [wsclean](https://wsclean.readthedocs.io/) docs:
 
 > WSClean does not output these images in a normal “imaging cube” like CASA
