@@ -17,7 +17,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from fitscube.fitscube import logger
+from fitscube.combine_fits import logger
 from fitscube.logging import set_verbosity
 
 
