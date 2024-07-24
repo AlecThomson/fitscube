@@ -62,7 +62,8 @@ Discussions = "https://github.com/AlecThomson/fitscube/discussions"
 Changelog = "https://github.com/AlecThomson/fitscube/releases"
 
 [project.scripts]
-fistscube = "fitscube.cutout:main"
+fitscube = "fitscube.combine_fits:cli"
+stokescube = "fitscube.combine_stokes:cli"
 
 [tool.hatch]
 version.source = "vcs"
@@ -72,6 +73,8 @@ build.hooks.vcs.version-file = "fitscube/_version.py"
 features = ["test"]
 scripts.test = "pytest {args}"
 
+[tool.hatch.build.targets.wheel]
+packages = ["fitscube"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
