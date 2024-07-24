@@ -284,6 +284,7 @@ def make_beam_table(
     header["CASAMBM"] = True
     header["COMMENT"] = "The PSF in each image plane varies."
     header["COMMENT"] = "Full beam information is stored in the second FITS extension."
+    del header["BMAJ"], header["BMIN"], header["BPA"]
     nchan = len(beams.major)
     chans = np.arange(nchan)
     pol = get_polarisation(header)
