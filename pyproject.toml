@@ -33,7 +33,6 @@ dynamic = ["version"]
 dependencies = [
   "astropy",
   "numpy",
-  "numpy",
   "tqdm",
   "radio_beam"
 ]
