@@ -7,6 +7,7 @@ Assumes:
 - All the relevant information is in the first header of the first image
 
 """
+from __future__ import annotations
 
 import os
 from typing import Union

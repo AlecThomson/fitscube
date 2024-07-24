@@ -20,9 +20,9 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
-from tqdm.auto import tqdm
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
+from tqdm.auto import tqdm
 
 
 class InitResult(NamedTuple):
@@ -249,8 +249,7 @@ def get_polarisation(header: fits.Header) -> int:
         if ctype == "STOKES":
             assert naxis <= 1, f"Only one polarisation axis is supported - found {naxis}"
             return i
-    else:
-        return 0
+    return 0
 
 def make_beam_table(beams: Beams, header: fits.Header) -> tuple[fits.BinTableHDU, fits.header]:
 
