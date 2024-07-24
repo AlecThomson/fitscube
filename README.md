@@ -82,15 +82,19 @@ stokescube -h
 Python:
 
 ```python
+from pathlib import Path
+
 from fitscube import combine_fits, combine_stokes
 
+file_list = list(Path().glob("*.fits"))
+
 hdu_list, frequencies = combine_fits(
-    ["file1.fits", "file2.fits", "file3.fits"],
+    file_list
 )
-hdus_list = combine_stokes(
-    "stokes_I.fits",
-    "stokes_Q.fits",
-    "stokes_U.fits",
+hdu_stokes_list = combine_stokes(
+    Path("stokes_I.fits"),
+    Path("stokes_Q.fits"),
+    Path("stokes_U.fits"),
 )
 ```
 
