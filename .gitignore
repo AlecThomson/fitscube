@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 test.ipynb
 .vscode/settings.json
+fitscube/_version.py
