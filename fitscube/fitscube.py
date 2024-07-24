@@ -419,10 +419,10 @@ def combine_fits(
         beam_table, new_header = make_beam_table(beams, new_header)
 
     hdu = fits.PrimaryHDU(data_cube, header=new_header)
-    hdul = fits.HDUList([hdu])
-
+    hdu_python_list = [hdu]
     if has_beams:
-        hdul.append(beam_table)
+        hdu_python_list.append(beam_table)
+    hdul = fits.HDUList(hdu_python_list)
 
     return hdul, freqs
 
