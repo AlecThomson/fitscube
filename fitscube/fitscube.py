@@ -138,11 +138,11 @@ def init_cube(
         # Look for the frequency axis in wcs
         try:
             idx = wcs.axis_type_names[::-1].index("FREQ")
-        except ValueError:
+        except ValueError as e:
             msg = "No FREQ axis found in WCS."
-            raise ValueError(msg)
+            raise ValueError(msg) from e
         fits_idx = wcs.axis_type_names.index("FREQ") + 1
-        logger.info(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
+        logger.info("FREQ axis found at index %s (NAXIS%s)", idx, fits_idx)
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -184,7 +184,7 @@ def parse_freqs(
         raise ValueError(msg)
     
     if freq_file is not None:
-        logger.info(f"Reading frequencies from {freq_file}")
+        logger.info("Reading frequencies from %s", freq_file)
         return np.loadtxt(freq_file) * u.Hz
     
     logger.info("Reading frequencies from FITS files")
@@ -201,11 +201,11 @@ def parse_freqs(
         if is_2d:
             try:
                 freqs[chan] = header["REFFREQ"] * u.Hz
-            except KeyError:
+            except KeyError as e:
                 msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
                 raise KeyError(
                     msg
-                )
+                ) from e
         else:
             try:
                 freq = WCS(image).spectral.pixel_to_world(0)
