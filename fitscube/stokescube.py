@@ -10,18 +10,20 @@ Assumes:
 from __future__ import annotations
 
 import os
-from typing import Union
 
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+
+from fitscube.fitscube import logger
+from fitscube.logging import set_verbosity
 
 
 def combine_stokes(
     stokes_I_file: str,
     stokes_Q_file: str,
     stokes_U_file: str,
-    stokes_V_file: Union[str, None] = None,
+    stokes_V_file: str | None = None,
 ) -> fits.HDUList:
     # Read in the data
     stokes_I = fits.getdata(stokes_I_file)
@@ -39,21 +41,25 @@ def combine_stokes(
 
     # Check that the headers are the same
     if stokes_I_header != stokes_Q_header:
-        raise ValueError("Stokes I and Q headers are not the same.")
+        msg = "Stokes I and Q headers are not the same."
+        raise ValueError(msg)
     if stokes_I_header != stokes_U_header:
-        raise ValueError("Stokes I and U headers are not the same.")
-    if stokes_V_file is not None:
-        if stokes_I_header != stokes_V_header:
-            raise ValueError("Stokes I and V headers are not the same.")
+        msg = "Stokes I and U headers are not the same."
+        raise ValueError(msg)
+    if stokes_V_file is not None and stokes_I_header != stokes_V_header:
+        msg = "Stokes I and V headers are not the same."
+        raise ValueError(msg)
 
     # Check that the data are the same shape
     if stokes_I.shape != stokes_Q.shape:
-        raise ValueError("Stokes I and Q data are not the same shape.")
+        msg = "Stokes I and Q data are not the same shape."
+        raise ValueError(msg)
     if stokes_I.shape != stokes_U.shape:
-        raise ValueError("Stokes I and U data are not the same shape.")
-    if stokes_V_file is not None:
-        if stokes_I.shape != stokes_V.shape:
-            raise ValueError("Stokes I and V data are not the same shape.")
+        msg = "Stokes I and U data are not the same shape."
+        raise ValueError(msg)
+    if stokes_V_file is not None and stokes_I.shape != stokes_V.shape:
+        msg = "Stokes I and V data are not the same shape."
+        raise ValueError(msg)
 
     datas = (
         (stokes_I, stokes_Q, stokes_U)
@@ -85,9 +91,8 @@ def combine_stokes(
 
     # Write the output file
     hdu = fits.PrimaryHDU(output_cube, output_header)
-    hdul = fits.HDUList([hdu])
+    return fits.HDUList([hdu])
 
-    return hdul
 
 
 def cli():
@@ -98,21 +103,27 @@ def cli():
     parser.add_argument("stokes_Q_file", type=str, help="Stokes Q file")
     parser.add_argument("stokes_U_file", type=str, help="Stokes U file")
     parser.add_argument("output_file", type=str, help="Output file")
-    parser.add_argument("-v", "--stokes_V_file", type=str, help="Stokes V file")
+    parser.add_argument("-V", "--stokes_V_file", type=str, help="Stokes V file")
     parser.add_argument(
         "-o",
         "--overwrite",
         action="store_true",
         help="Overwrite output file if it exists",
     )
-
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
     args = parser.parse_args()
-
+    set_verbosity(
+        logger=logger,
+        verbosity=args.verbosity,
+    )
     overwrite = args.overwrite
     output_file = args.output_file
     if not overwrite and os.path.exists(output_file):
+        msg = f"Output file {output_file} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
-            f"Output file {output_file} already exists. Use --overwrite to overwrite."
+            msg
         )
 
     hdul = combine_stokes(
@@ -122,7 +133,7 @@ def cli():
         stokes_V_file=args.stokes_V_file,
     )
     hdul.writeto(output_file, overwrite=overwrite)
-    print(f"Written cube to {output_file}")
+    logger.info(f"Written cube to {output_file}")
 
 
 if __name__ == "__main__":

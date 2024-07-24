@@ -24,6 +24,10 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.auto import tqdm
 
+from fitscube.logging import set_verbosity, setup_logger
+
+logger = setup_logger()
+
 
 class InitResult(NamedTuple):
     data_cube: np.ndarray
@@ -130,15 +134,16 @@ def init_cube(
     is_2d = len(old_data.shape) == 2
     idx = 0
     if not is_2d:
-        print("Input image is a cube. Looking for FREQ axis.")
+        logger.info("Input image is a cube. Looking for FREQ axis.")
         wcs = WCS(old_header)
         # Look for the frequency axis in wcs
         try:
             idx = wcs.axis_type_names[::-1].index("FREQ")
         except ValueError:
-            raise ValueError("No FREQ axis found in WCS.")
+            msg = "No FREQ axis found in WCS."
+            raise ValueError(msg)
         fits_idx = wcs.axis_type_names.index("FREQ") + 1
-        print(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
+        logger.info(f"FREQ axis found at index {idx} (NAXIS{fits_idx})")
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -172,17 +177,18 @@ def parse_freqs(
         List[float]: List of frequencies
     """
     if ignore_freq:
-        print("Ignoring frequency information")
+        logger.info("Ignoring frequency information")
         return np.arange(len(file_list)) * u.Hz
     
     if freq_file is not None and freq_list is not None:
-        raise ValueError("Must specify either freq_file or freq_list, not both")
+        msg = "Must specify either freq_file or freq_list, not both"
+        raise ValueError(msg)
     
     if freq_file is not None:
-        print(f"Reading frequencies from {freq_file}")
+        logger.info(f"Reading frequencies from {freq_file}")
         return np.loadtxt(freq_file) * u.Hz
     
-    print("Reading frequencies from FITS files")
+    logger.info("Reading frequencies from FITS files")
     freqs = np.arange(len(file_list)) * u.Hz
     for chan, image in enumerate(
         tqdm(
@@ -197,16 +203,18 @@ def parse_freqs(
             try:
                 freqs[chan] = header["REFFREQ"] * u.Hz
             except KeyError:
+                msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
                 raise KeyError(
-                    "REFFREQ not in header. Cannot combine 2D images without frequency information."
+                    msg
                 )
         else:
             try:
                 freq = WCS(image).spectral.pixel_to_world(0)
                 freqs[chan] = freq.to(u.Hz)
             except Exception as e:
+                msg = "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
                 raise ValueError(
-                    "No FREQ axis found in WCS. Cannot combine ND images without frequency information."
+                    msg
                 ) from e
 
     return freqs
@@ -234,13 +242,12 @@ def parse_beams(
             beam = Beam(major=np.nan * u.deg, minor=np.nan * u.deg, pa=np.nan * u.deg)
         beam_list.append(beam)
 
-    beams = Beams(
+    return Beams(
         major=[beam.major.to(u.deg).value for beam in beam_list] * u.deg,
         minor=[beam.minor.to(u.deg).value for beam in beam_list] * u.deg,
         pa=[beam.pa.to(u.deg).value for beam in beam_list] * u.deg,
     )
 
-    return beams
 
 def get_polarisation(header: fits.Header) -> int:
     wcs = WCS(header)
@@ -354,7 +361,7 @@ def combine_fits(
     # Write out cubes
     even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
     if not even_freq and create_blanks:
-        print("Trying to create a blank cube with evenly spaced frequencies")
+        logger.info("Trying to create a blank cube with evenly spaced frequencies")
         new_data_cube, new_freqs = create_blank_data(
             data_cube=data_cube,
             freqs=freqs,
@@ -366,8 +373,8 @@ def combine_fits(
             freqs = new_freqs
 
     if not even_freq:
-        print("WARNING: Frequencies are not evenly spaced")
-        print("Use the frequency file to specify the frequencies")
+        logger.warning("Frequencies are not evenly spaced")
+        logger.info("Use the frequency file to specify the frequencies")
 
     new_header = old_header.copy()
     new_header["NAXIS"] = len(data_cube.shape)
@@ -440,24 +447,32 @@ def cli():
         action="store_true",
         help="Ignore frequency information and just stack (probably not what you want)",
     )
-
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
     args = parser.parse_args()
 
+    set_verbosity(
+        logger=logger,
+        verbosity=args.verbosity,
+    )
     overwrite = args.overwrite
     out_cube = args.out_cube
     if not overwrite and os.path.exists(out_cube):
+        msg = f"Output file {out_cube} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
-            f"Output file {out_cube} already exists. Use --overwrite to overwrite."
+            msg
         )
 
     freqs_file = out_cube.replace(".fits", ".freqs_Hz.txt")
     if os.path.exists(freqs_file) and not overwrite:
+        msg = f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
-            f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
+            msg
         )
 
     if overwrite:
-        print("Overwriting output files")
+        logger.info("Overwriting output files")
 
     hdul, freqs = combine_fits(
         file_list=args.file_list,
@@ -468,9 +483,9 @@ def cli():
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
-    print(f"Written cube to {out_cube}")
+    logger.info(f"Written cube to {out_cube}")
     np.savetxt(freqs_file, freqs.to(u.Hz).value)
-    print(f"Written frequencies to {freqs_file}")
+    logger.info(f"Written frequencies to {freqs_file}")
 
 
 if __name__ == "__main__":
