@@ -115,7 +115,7 @@ def combine_stokes(
     return fits.HDUList([hdu])
 
 
-def cli():
+def cli() -> None:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stokes_i_file", type=Path, help="Stokes I file")

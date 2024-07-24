@@ -104,10 +104,10 @@ def create_blank_data(
     for old_chan, freq in enumerate(freqs):
         new_chans = np.where(np.isclose(new_freqs, freq))[0]
         assert len(new_chans) == 1, "Too many matching channels"
-        new_chan = new_chans[0]
-        new_slice = [slice(None)] * len(new_shape)
+        new_chan = int(new_chans[0])
+        new_slice: list[slice | int] = [slice(None)] * len(new_shape)
         new_slice[idx] = new_chan
-        old_slice = [slice(None)] * len(new_shape)
+        old_slice: list[slice | int] = [slice(None)] * len(new_shape)
         old_slice[idx] = old_chan
         new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
 
@@ -159,8 +159,8 @@ def init_cube(
 
 
 def parse_freqs(
-    file_list: list[str],
-    freq_file: str | None = None,
+    file_list: list[Path],
+    freq_file: Path | None = None,
     freq_list: list[float] | None = None,
     ignore_freq: bool | None = False,
 ) -> u.Quantity:
@@ -221,7 +221,7 @@ def parse_freqs(
 
 
 def parse_beams(
-    file_list: list[str],
+    file_list: list[Path],
 ) -> Beams:
     """Parse the beam information.
 
@@ -376,7 +376,7 @@ def combine_fits(
         )
     ):
         plane = fits.getdata(image)
-        slicer = [slice(None)] * len(plane.shape)
+        slicer: list[slice | int] = [slice(None)] * len(plane.shape)
         if is_2d:
             slicer.insert(0, chan)
         else:
@@ -430,7 +430,7 @@ def combine_fits(
     return hdul, freqs
 
 
-def cli():
+def cli() -> None:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

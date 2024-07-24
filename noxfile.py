@@ -33,6 +33,7 @@ def pylint(session: nox.Session) -> None:
     session.run(
         "pylint",
         "--ignored-classes=astropy.units",
+        "-d duplicate-code",
         "fitscube",
         *session.posargs,
     )
