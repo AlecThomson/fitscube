@@ -9,7 +9,7 @@ Assumes:
 """
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
@@ -20,10 +20,10 @@ from fitscube.logging import set_verbosity
 
 
 def combine_stokes(
-    stokes_I_file: str,
-    stokes_Q_file: str,
-    stokes_U_file: str,
-    stokes_V_file: str | None = None,
+    stokes_I_file: Path,
+    stokes_Q_file: Path,
+    stokes_U_file: Path,
+    stokes_V_file: Path | None = None,
 ) -> fits.HDUList:
     # Read in the data
     stokes_I = fits.getdata(stokes_I_file)
@@ -99,11 +99,11 @@ def cli():
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stokes_I_file", type=str, help="Stokes I file")
-    parser.add_argument("stokes_Q_file", type=str, help="Stokes Q file")
-    parser.add_argument("stokes_U_file", type=str, help="Stokes U file")
-    parser.add_argument("output_file", type=str, help="Output file")
-    parser.add_argument("-V", "--stokes_V_file", type=str, help="Stokes V file")
+    parser.add_argument("stokes_I_file", type=Path, help="Stokes I file")
+    parser.add_argument("stokes_Q_file", type=Path, help="Stokes Q file")
+    parser.add_argument("stokes_U_file", type=Path, help="Stokes U file")
+    parser.add_argument("output_file", type=Path, help="Output file")
+    parser.add_argument("-V", "--stokes_V_file", type=Path, help="Stokes V file")
     parser.add_argument(
         "-o",
         "--overwrite",
@@ -119,8 +119,8 @@ def cli():
         verbosity=args.verbosity,
     )
     overwrite = args.overwrite
-    output_file = args.output_file
-    if not overwrite and os.path.exists(output_file):
+    output_file = Path(args.output_file)
+    if not overwrite and output_file.exists():
         msg = f"Output file {output_file} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
             msg

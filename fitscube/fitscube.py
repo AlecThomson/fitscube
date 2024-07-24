@@ -11,7 +11,6 @@ Assumes:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -456,16 +455,16 @@ def cli():
         logger=logger,
         verbosity=args.verbosity,
     )
-    overwrite = args.overwrite
-    out_cube = args.out_cube
-    if not overwrite and os.path.exists(out_cube):
+    overwrite = bool(args.overwrite)
+    out_cube = Path(args.out_cube)
+    if not overwrite and out_cube.exists():
         msg = f"Output file {out_cube} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
             msg
         )
 
-    freqs_file = out_cube.replace(".fits", ".freqs_Hz.txt")
-    if os.path.exists(freqs_file) and not overwrite:
+    freqs_file = out_cube.with_suffix(".freqs_Hz.txt")
+    if freqs_file.exists() and not overwrite:
         msg = f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
         raise FileExistsError(
             msg
@@ -483,9 +482,9 @@ def cli():
     )
 
     hdul.writeto(out_cube, overwrite=overwrite)
-    logger.info(f"Written cube to {out_cube}")
+    logger.info("Written cube to %s", out_cube)
     np.savetxt(freqs_file, freqs.to(u.Hz).value)
-    logger.info(f"Written frequencies to {freqs_file}")
+    logger.info("Written frequencies to %s", freqs_file)
 
 
 if __name__ == "__main__":
