@@ -29,6 +29,13 @@ from fitscube.logging import set_verbosity, setup_logger
 
 logger = setup_logger()
 
+# store the number of bytes per value in a dictionary
+BIT_DICT = {
+    64: 8,
+    32: 4,
+    16: 2,
+    8: 1,
+}
 
 class InitResult(NamedTuple):
     """Initialization result."""
@@ -107,7 +114,7 @@ def create_cube_from_scratch(
     output_file: Path,
     output_header: fits.Header,
     overwrite: bool = False,
-) -> None:
+) -> fits.Header:
     if output_file.exists() and not overwrite:
         msg = f"Output file {output_file} already exists."
         raise FileExistsError(msg)
@@ -122,6 +129,8 @@ def create_cube_from_scratch(
     # If the output shape is less than 1801, we can create a blank array
     # in memory and write it to disk
     if np.prod(output_shape) < 1801:
+        msg = "Output cube is small enough to create in memory"
+        logger.warning(msg)
         out_arr = np.zeros(output_shape)
         fits.writeto(output_file, out_arr, output_header, overwrite=overwrite)
         with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
@@ -129,7 +138,9 @@ def create_cube_from_scratch(
             assert (
                 hdu_list[0].data.shape == output_shape
             ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
-        return
+        return fits.getheader(output_file)
+
+    logger.info("Output cube is too large to create in memory. Creating a blank file.")
 
     small_size = [1 for _ in output_shape]
     data = np.zeros(small_size)
@@ -143,14 +154,8 @@ def create_cube_from_scratch(
 
     header.tofile(output_file, overwrite=overwrite)
 
-    # store the number of bytes per value in a dictionary
-    bit_dict = {
-        64: 8,
-        32: 4,
-        16: 2,
-        8: 1,
-    }
-    bytes_per_value = bit_dict.get(abs(output_header["BITPIX"]), None)
+    
+    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
     if bytes_per_value is None:
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
@@ -170,10 +175,15 @@ def create_cube_from_scratch(
         fobj.write(b"\0")
 
     with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
+        hdu = hdu_list[0]
+        data = hdu.data
+        on_disk_shape = data.shape
         on_disk_shape = hdu_list[0].data.shape
         assert (
-            hdu_list[0].data.shape == output_shape
+            on_disk_shape == output_shape
         ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
+
+    return fits.getheader(output_file)
 
 
 def create_output_cube(
@@ -197,7 +207,9 @@ def create_output_cube(
         InitResult: header, freq_idx, freq_fits_idx, is_2d
     """
     old_data, old_header = fits.getdata(old_name, header=True)
-    even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
+    even_freq = np.diff(freqs).std() < (1e-4 * u.Hz)
+    if not even_freq:
+        logger.warning("Frequencies are not evenly spaced")
 
     n_chan = len(freqs)
 
@@ -238,9 +250,20 @@ def create_output_cube(
     else:
         cube_shape[idx] = n_chan
 
-    create_cube_from_scratch(
+    output_header = create_cube_from_scratch(
         output_file=out_cube, output_header=new_header, overwrite=overwrite
     )
+
+
+    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
+    with out_cube.open("rb+") as fobj:
+        for chan in tqdm(range(n_chan), desc="Setting to NaN"):
+            plane = np.ones_like(old_data) * np.nan
+            seek_length = len(output_header.tostring()) + (
+                np.prod(plane_shape) * np.abs(output_header["BITPIX"] // bytes_per_value)
+            ) * chan
+            fobj.seek(seek_length)
+            fobj.write(plane.tobytes())
 
     return InitResult(
         header=new_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
@@ -311,6 +334,9 @@ def parse_freqs(
                     raise KeyError(msg) from e
             else:
                 try:
+                    if "SPECSYS" not in header:
+                        logger.warning("SPECSYS not in header. Assuming TOPOCENT")
+                        header["SPECSYS"] = "TOPOCENT"
                     freq = WCS(header).spectral.pixel_to_world(0)
                     file_freqs[chan] = freq.to(u.Hz)
                 except Exception as e:
@@ -471,19 +497,21 @@ def combine_fits(
         ignore_freq=ignore_freq,
         overwrite=overwrite,
     )
+    exit()
 
     with fits.open(out_cube, mode="update", memmap=True) as hdu_list:
         hdu: fits.PrimaryHDU = hdu_list[0]
-        new_shape = hdu.data.shape
+        data = hdu.data
+        new_shape = data.shape
         # Set all data to NaN
-        for chan, _ in enumerate(freqs):
+        for chan, _ in enumerate(tqdm(freqs)):
             slicer: list[slice | int] = [slice(None)] * len(hdu.data.shape)
             if is_2d:
                 slicer.insert(0, chan)
             else:
                 slicer[freq_idx] = chan
-            hdu.data[tuple(slicer)] = np.nan
-            hdu_list.flush()
+            data[tuple(slicer)] *= np.nan
+            # hdu_list.flush()
 
         for old_chan, freq in enumerate(file_freqs):
             new_chans = np.where(np.isclose(freqs, freq))[0]
@@ -578,6 +606,7 @@ def cli() -> None:
         freq_list=args.freqs,
         ignore_freq=args.ignore_freq,
         create_blanks=args.create_blanks,
+        overwrite=overwrite,
     )
 
     logger.info("Written cube to %s", out_cube)
