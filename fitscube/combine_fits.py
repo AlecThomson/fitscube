@@ -12,8 +12,10 @@ Assumes:
 from __future__ import annotations
 
 import argparse
+import asyncio
+from io import BufferedRandom
 from pathlib import Path
-from typing import NamedTuple
+from typing import Awaitable, NamedTuple
 
 import astropy.units as u
 import numpy as np
@@ -23,7 +25,7 @@ from astropy.wcs import WCS
 from numpy.typing import ArrayLike
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
-from tqdm.auto import tqdm
+from tqdm.asyncio import tqdm
 
 from fitscube.logging import set_verbosity, setup_logger
 
@@ -68,6 +70,37 @@ class FileFrequencyInfo(NamedTuple):
     """Frequencies"""
     missing_chan_idx: ArrayLike
     """Missing channel indices"""
+
+async def write_channel_to_cube_coro(file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header) -> Awaitable[None]:
+    seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
+    file_handle.seek(seek_length)
+    await asyncio.to_thread(file_handle.write, plane_bytes)
+    del plane_bytes
+
+def write_channel_to_cube(file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header) -> Awaitable[None]:
+    return asyncio.run(write_channel_to_cube_coro(file_handle, plane_bytes, chan, header))
+
+# Stolen from https://stackoverflow.com/a/61478547
+async def gather_with_limit(limit: int | None, *coros: Awaitable, desc: str | None = None) -> Awaitable:
+    """Gather with a limit on the number of coroutines running at once.
+
+    Args:
+        limit (int): The number of coroutines to run at once
+        coros (Awaitable): The coroutines to run
+
+    Returns:
+        Awaitable: The result of the coroutines
+    """
+    if limit is None:
+        return await tqdm.gather(*coros, desc=desc)
+
+    semaphore = asyncio.Semaphore(limit)
+
+    async def sem_coro(coro: Awaitable):
+        async with semaphore:
+            return await coro
+
+    return await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc)
 
 
 # https://stackoverflow.com/a/66082278
@@ -193,6 +226,16 @@ def create_output_cube(
     ignore_freq: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
+    return asyncio.run(create_output_cube_coro(old_name, out_cube, freqs, ignore_freq, overwrite))
+    
+
+async def create_output_cube_coro(
+    old_name: Path,
+    out_cube: Path,
+    freqs: u.Quantity,
+    ignore_freq: bool = False,
+    overwrite: bool = False,
+) -> Awaitable[InitResult]:
     """Initialize the data cube.
 
     Args:
@@ -253,22 +296,35 @@ def create_output_cube(
     output_header = create_cube_from_scratch(
         output_file=out_cube, output_header=new_header, overwrite=overwrite
     )
-
-
-    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
-    with out_cube.open("rb+") as fobj:
-        for chan in tqdm(range(n_chan), desc="Setting to NaN"):
-            plane = np.ones_like(old_data) * np.nan
-            seek_length = len(output_header.tostring()) + (
-                np.prod(plane_shape) * np.abs(output_header["BITPIX"] // bytes_per_value)
-            ) * chan
-            fobj.seek(seek_length)
-            fobj.write(plane.tobytes())
-
     return InitResult(
-        header=new_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
+        header=output_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
     )
 
+def read_freq_from_header(image_path: Path) -> u.Quantity:
+    return asyncio.run(read_freq_from_header_coro(image_path))
+
+async def read_freq_from_header_coro(
+    image_path: Path,
+) -> Awaitable[u.Quantity]:
+    header = await asyncio.to_thread(fits.getheader, image_path)
+    wcs = WCS(header)
+    is_2d = len(wcs.array_shape) == 2
+    if is_2d:
+        try:
+            freq = await asyncio.to_thread(header.get, "REFFREQ")
+            return freq * u.Hz
+        except KeyError as e:
+            msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
+            raise KeyError(msg) from e
+    try:
+        if "SPECSYS" not in header:
+            header["SPECSYS"] = "TOPOCENT"
+        wcs = WCS(header)
+        return wcs.spectral.pixel_to_world(0).to(u.Hz)
+    except Exception as e:
+        msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
+        raise ValueError(msg) from e
+    
 
 def parse_freqs(
     file_list: list[Path],
@@ -277,6 +333,16 @@ def parse_freqs(
     ignore_freq: bool = False,
     create_blanks: bool = False,
 ) -> FileFrequencyInfo:
+    return asyncio.run(parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks))
+
+async def parse_freqs_coro(
+    file_list: list[Path],
+    freq_file: Path | None = None,
+    freq_list: list[float] | None = None,
+    ignore_freq: bool = False,
+    create_blanks: bool = False,
+    max_workers: int | None = None,
+) -> Awaitable[FileFrequencyInfo]:
     """Parse the frequency information.
 
     Args:
@@ -315,33 +381,18 @@ def parse_freqs(
 
     else:
         logger.info("Reading frequencies from FITS files")
-        file_freqs = np.arange(len(file_list)) * u.Hz
+        first_header = fits.getheader(file_list[0])
+        if "SPECSYS" not in first_header:
+            logger.warning("SPECSYS not in header(s). Will set to TOPOCENT")
+        # file_freqs = np.arange(len(file_list)) * u.Hz
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
-        for chan, image in enumerate(
-            tqdm(
-                file_list,
-                desc="Extracting frequencies",
-            )
-        ):
-            plane = fits.getdata(image)
-            is_2d = len(plane.shape) == 2
-            header = fits.getheader(image)
-            if is_2d:
-                try:
-                    file_freqs[chan] = header["REFFREQ"] * u.Hz
-                except KeyError as e:
-                    msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
-                    raise KeyError(msg) from e
-            else:
-                try:
-                    if "SPECSYS" not in header:
-                        logger.warning("SPECSYS not in header. Assuming TOPOCENT")
-                        header["SPECSYS"] = "TOPOCENT"
-                    freq = WCS(header).spectral.pixel_to_world(0)
-                    file_freqs[chan] = freq.to(u.Hz)
-                except Exception as e:
-                    msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
-                    raise ValueError(msg) from e
+        coros = []
+        for image_path in file_list: 
+            coro = read_freq_from_header_coro(image_path)
+            coros.append(coro)
+
+        list_of_freqs = await gather_with_limit(max_workers, *coros, desc="Extracting frequencies")
+        file_freqs = np.array([f.to(u.Hz).value for f in list_of_freqs]) * u.Hz
 
         freqs = file_freqs.copy()
 
@@ -452,7 +503,6 @@ def make_beam_table(
 
     return tab_hdu, header
 
-
 def combine_fits(
     file_list: list[Path],
     out_cube: Path,
@@ -461,7 +511,57 @@ def combine_fits(
     ignore_freq: bool = False,
     create_blanks: bool = False,
     overwrite: bool = False,
+    max_workers: int | None = None,
 ) -> u.Quantity:
+
+    return asyncio.run(
+        combine_fits_coro(
+            file_list=file_list,
+            out_cube=out_cube,
+            freq_file=freq_file,
+            freq_list=freq_list,
+            ignore_freq=ignore_freq,
+            create_blanks=create_blanks,
+            overwrite=overwrite,
+            max_workers=max_workers,
+        )
+    )
+
+
+async def process_channel(
+    file_handle: BufferedRandom,
+    new_header: fits.Header,
+    new_channel: int,
+    old_channel: int,
+    is_missing: bool,
+    file_list: list[Path],
+):
+
+    if is_missing:
+        plane = await asyncio.to_thread(fits.getdata,file_list[0])
+        plane *= np.nan
+    else:
+        plane = await asyncio.to_thread(fits.getdata, file_list[old_channel])
+
+    plane_bytes = plane.tobytes()
+    await write_channel_to_cube_coro(
+        file_handle=file_handle,
+        plane_bytes=plane_bytes,
+        chan=new_channel,
+        header=new_header,
+    )
+    del plane, plane_bytes
+
+async def combine_fits_coro(
+    file_list: list[Path],
+    out_cube: Path,
+    freq_file: Path | None = None,
+    freq_list: list[float] | None = None,
+    ignore_freq: bool = False,
+    create_blanks: bool = False,
+    overwrite: bool = False,
+    max_workers: int | None = None,
+) -> Awaitable[u.Quantity]:
     """Combine FITS files into a cube.
 
     Args:
@@ -476,61 +576,72 @@ def combine_fits(
     """
     # TODO: Check that all files have the same WCS
 
-    file_freqs, freqs, missing_chan_idx = parse_freqs(
+    file_freqs, freqs, missing_chan_idx = await parse_freqs_coro(
         freq_file=freq_file,
         freq_list=freq_list,
         ignore_freq=ignore_freq,
         file_list=file_list,
         create_blanks=create_blanks,
+        max_workers=max_workers,
     )
 
     # Sort the files by frequency
-    sort_idx = np.argsort(file_freqs)
-    file_list = np.array(file_list)[sort_idx].tolist()
-    freqs = np.sort(freqs)
+    old_sort_idx = np.argsort(file_freqs)
+    file_list = np.array(file_list)[old_sort_idx].tolist()
+    new_sort_idx = np.argsort(freqs)
+    freqs = freqs[new_sort_idx]
+    missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     # Initialize the data cube
-    new_header, freq_idx, freq_fits_idx, is_2d = create_output_cube(
+    new_header, freq_idx, freq_fits_idx, is_2d = await create_output_cube_coro(
         old_name=file_list[0],
         out_cube=out_cube,
         freqs=freqs,
         ignore_freq=ignore_freq,
         overwrite=overwrite,
     )
-    exit()
 
-    with fits.open(out_cube, mode="update", memmap=True) as hdu_list:
-        hdu: fits.PrimaryHDU = hdu_list[0]
-        data = hdu.data
-        new_shape = data.shape
-        # Set all data to NaN
-        for chan, _ in enumerate(tqdm(freqs)):
-            slicer: list[slice | int] = [slice(None)] * len(hdu.data.shape)
-            if is_2d:
-                slicer.insert(0, chan)
-            else:
-                slicer[freq_idx] = chan
-            data[tuple(slicer)] *= np.nan
-            # hdu_list.flush()
+    new_channels = np.arange(len(freqs))
+    old_channels = np.arange(len(file_freqs))
 
-        for old_chan, freq in enumerate(file_freqs):
-            new_chans = np.where(np.isclose(freqs, freq))[0]
-            assert len(new_chans) == 1, "Too many matching channels"
-            new_chan = int(new_chans[0])
-            new_slice: list[slice | int] = [slice(None)] * len(new_shape)
-            new_slice[freq_idx] = new_chan
-            hdu.data[tuple(new_slice)] = fits.getdata(file_list[old_chan])
-            hdu_list.flush()
+    new_to_old = {new: old for new, old in zip(new_channels[np.logical_not(missing_chan_idx)], old_channels)}
+
+    with out_cube.open("rb+") as file_handle:
+        coros = []
+        for new_channel in tqdm(new_channels, desc="Writing channels"):
+            is_missing = missing_chan_idx[new_channel]
+            old_channel = new_to_old.get(new_channel, None)
+            if is_missing:
+                old_channel = 0
+            if old_channel is None:
+                msg = f"Missing channel {new_channel} in input files"
+                raise ValueError(msg)
+            
+            coro = process_channel(
+                file_handle=file_handle,
+                new_header=new_header,
+                new_channel=new_channel,
+                old_channel=old_channel,
+                is_missing=is_missing,
+                file_list=file_list,
+            )
+            coros.append(coro)
+
+        _ = await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
         # Handle beams
         if "BMAJ" in fits.getheader(file_list[0]):
             logger.info("Extracting beam information")
             beams = parse_beams(file_list)
-            beam_table, new_header = make_beam_table(beams, new_header)
-            msg = "Adding beam table to primary header"
-            logger.info(msg)
-            hdu_list.append(beam_table)
-            hdu_list.flush()
+            with fits.open(out_cube, memmap=True, mode="denywrite") as hdulist:
+                hdu = hdulist[0]
+                data = hdu.data
+                header = hdu.header
+            primary_hdu = fits.PrimaryHDU(data=data, header=header)
+            logger.info("Adding beam table to primary header")
+            beam_table_hdu, new_header = make_beam_table(beams, new_header)
+            new_hdulist = fits.HDUList([primary_hdu, beam_table_hdu])
+            new_hdulist.writeto(out_cube, overwrite=True)
 
     return freqs
 
@@ -579,6 +690,12 @@ def cli() -> None:
     parser.add_argument(
         "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum number of workers to use for concurrent processing",
+    )
     args = parser.parse_args()
 
     set_verbosity(
@@ -600,13 +717,14 @@ def cli() -> None:
         logger.info("Overwriting output files")
 
     freqs = combine_fits(
-        file_list=args.file_list,
-        out_cube=out_cube,
-        freq_file=args.freq_file,
-        freq_list=args.freqs,
-        ignore_freq=args.ignore_freq,
-        create_blanks=args.create_blanks,
-        overwrite=overwrite,
+            file_list=args.file_list,
+            out_cube=out_cube,
+            freq_file=args.freq_file,
+            freq_list=args.freqs,
+            ignore_freq=args.ignore_freq,
+            create_blanks=args.create_blanks,
+            overwrite=overwrite,
+            max_workers=args.max_workers
     )
 
     logger.info("Written cube to %s", out_cube)
