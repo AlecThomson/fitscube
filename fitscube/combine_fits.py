@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from io import BufferedRandom
 from pathlib import Path
 from typing import Awaitable, NamedTuple
 
@@ -38,6 +37,7 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
+
 
 class InitResult(NamedTuple):
     """Initialization result."""
@@ -71,17 +71,26 @@ class FileFrequencyInfo(NamedTuple):
     missing_chan_idx: ArrayLike
     """Missing channel indices"""
 
-async def write_channel_to_cube_coro(file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header) -> Awaitable[None]:
-    seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
-    file_handle.seek(seek_length)
-    await asyncio.to_thread(file_handle.write, plane_bytes)
-    del plane_bytes
 
-def write_channel_to_cube(file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header) -> Awaitable[None]:
-    return asyncio.run(write_channel_to_cube_coro(file_handle, plane_bytes, chan, header))
+async def write_channel_to_cube_coro(
+    file_path: Path, plane_bytes: bytes, chan: int, header: fits.Header
+) -> Awaitable[None]:
+    with file_path.open("rb+") as file_handle:
+        seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
+        file_handle.seek(seek_length)
+        file_handle.write(plane_bytes)
+
+
+def write_channel_to_cube(
+    file_path: Path, plane_bytes: bytes, chan: int, header: fits.Header
+) -> Awaitable[None]:
+    return asyncio.run(write_channel_to_cube_coro(file_path, plane_bytes, chan, header))
+
 
 # Stolen from https://stackoverflow.com/a/61478547
-async def gather_with_limit(limit: int | None, *coros: Awaitable, desc: str | None = None) -> Awaitable:
+async def gather_with_limit(
+    limit: int | None, *coros: Awaitable, desc: str | None = None
+) -> Awaitable:
     """Gather with a limit on the number of coroutines running at once.
 
     Args:
@@ -187,7 +196,6 @@ def create_cube_from_scratch(
 
     header.tofile(output_file, overwrite=overwrite)
 
-    
     bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
     if bytes_per_value is None:
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
@@ -226,8 +234,10 @@ def create_output_cube(
     ignore_freq: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
-    return asyncio.run(create_output_cube_coro(old_name, out_cube, freqs, ignore_freq, overwrite))
-    
+    return asyncio.run(
+        create_output_cube_coro(old_name, out_cube, freqs, ignore_freq, overwrite)
+    )
+
 
 async def create_output_cube_coro(
     old_name: Path,
@@ -300,8 +310,10 @@ async def create_output_cube_coro(
         header=output_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
     )
 
+
 def read_freq_from_header(image_path: Path) -> u.Quantity:
     return asyncio.run(read_freq_from_header_coro(image_path))
+
 
 async def read_freq_from_header_coro(
     image_path: Path,
@@ -324,7 +336,7 @@ async def read_freq_from_header_coro(
     except Exception as e:
         msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
         raise ValueError(msg) from e
-    
+
 
 def parse_freqs(
     file_list: list[Path],
@@ -333,7 +345,10 @@ def parse_freqs(
     ignore_freq: bool = False,
     create_blanks: bool = False,
 ) -> FileFrequencyInfo:
-    return asyncio.run(parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks))
+    return asyncio.run(
+        parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks)
+    )
+
 
 async def parse_freqs_coro(
     file_list: list[Path],
@@ -387,11 +402,13 @@ async def parse_freqs_coro(
         # file_freqs = np.arange(len(file_list)) * u.Hz
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
         coros = []
-        for image_path in file_list: 
+        for image_path in file_list:
             coro = read_freq_from_header_coro(image_path)
             coros.append(coro)
 
-        list_of_freqs = await gather_with_limit(max_workers, *coros, desc="Extracting frequencies")
+        list_of_freqs = await gather_with_limit(
+            max_workers, *coros, desc="Extracting frequencies"
+        )
         file_freqs = np.array([f.to(u.Hz).value for f in list_of_freqs]) * u.Hz
 
         freqs = file_freqs.copy()
@@ -503,6 +520,7 @@ def make_beam_table(
 
     return tab_hdu, header
 
+
 def combine_fits(
     file_list: list[Path],
     out_cube: Path,
@@ -513,7 +531,6 @@ def combine_fits(
     overwrite: bool = False,
     max_workers: int | None = None,
 ) -> u.Quantity:
-
     return asyncio.run(
         combine_fits_coro(
             file_list=file_list,
@@ -529,28 +546,28 @@ def combine_fits(
 
 
 async def process_channel(
-    file_handle: BufferedRandom,
+    out_cube: Path,
     new_header: fits.Header,
     new_channel: int,
     old_channel: int,
     is_missing: bool,
     file_list: list[Path],
 ):
-
     if is_missing:
-        plane = await asyncio.to_thread(fits.getdata,file_list[0])
+        plane = await asyncio.to_thread(fits.getdata, file_list[0])
         plane *= np.nan
     else:
         plane = await asyncio.to_thread(fits.getdata, file_list[old_channel])
 
     plane_bytes = plane.tobytes()
     await write_channel_to_cube_coro(
-        file_handle=file_handle,
+        file_path=out_cube,
         plane_bytes=plane_bytes,
         chan=new_channel,
         header=new_header,
     )
     del plane, plane_bytes
+
 
 async def combine_fits_coro(
     file_list: list[Path],
@@ -604,44 +621,43 @@ async def combine_fits_coro(
     new_channels = np.arange(len(freqs))
     old_channels = np.arange(len(file_freqs))
 
-    new_to_old = {new: old for new, old in zip(new_channels[np.logical_not(missing_chan_idx)], old_channels)}
+    new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
-    with out_cube.open("rb+") as file_handle:
-        coros = []
-        for new_channel in tqdm(new_channels, desc="Writing channels"):
-            is_missing = missing_chan_idx[new_channel]
-            old_channel = new_to_old.get(new_channel, None)
-            if is_missing:
-                old_channel = 0
-            if old_channel is None:
-                msg = f"Missing channel {new_channel} in input files"
-                raise ValueError(msg)
-            
-            coro = process_channel(
-                file_handle=file_handle,
-                new_header=new_header,
-                new_channel=new_channel,
-                old_channel=old_channel,
-                is_missing=is_missing,
-                file_list=file_list,
-            )
-            coros.append(coro)
+    coros = []
+    for new_channel in new_channels:
+        is_missing = missing_chan_idx[new_channel]
+        old_channel = new_to_old.get(new_channel)
+        if is_missing:
+            old_channel = 0
+        if old_channel is None:
+            msg = f"Missing channel {new_channel} in input files"
+            raise ValueError(msg)
 
-        _ = await gather_with_limit(max_workers, *coros, desc="Writing channels")
+        coro = process_channel(
+            out_cube=out_cube,
+            new_header=new_header,
+            new_channel=new_channel,
+            old_channel=old_channel,
+            is_missing=is_missing,
+            file_list=file_list,
+        )
+        coros.append(coro)
 
-        # Handle beams
-        if "BMAJ" in fits.getheader(file_list[0]):
-            logger.info("Extracting beam information")
-            beams = parse_beams(file_list)
-            with fits.open(out_cube, memmap=True, mode="denywrite") as hdulist:
-                hdu = hdulist[0]
-                data = hdu.data
-                header = hdu.header
-            primary_hdu = fits.PrimaryHDU(data=data, header=header)
-            logger.info("Adding beam table to primary header")
-            beam_table_hdu, new_header = make_beam_table(beams, new_header)
-            new_hdulist = fits.HDUList([primary_hdu, beam_table_hdu])
-            new_hdulist.writeto(out_cube, overwrite=True)
+    await gather_with_limit(max_workers, *coros, desc="Writing channels")
+
+    # Handle beams
+    if "BMAJ" in fits.getheader(file_list[0]):
+        logger.info("Extracting beam information")
+        beams = parse_beams(file_list)
+        with fits.open(out_cube, memmap=True, mode="denywrite") as hdulist:
+            hdu = hdulist[0]
+            data = hdu.data
+            header = hdu.header
+        primary_hdu = fits.PrimaryHDU(data=data, header=header)
+        logger.info("Adding beam table to primary header")
+        beam_table_hdu, new_header = make_beam_table(beams, new_header)
+        new_hdulist = fits.HDUList([primary_hdu, beam_table_hdu])
+        new_hdulist.writeto(out_cube, overwrite=True)
 
     return freqs
 
@@ -717,14 +733,14 @@ def cli() -> None:
         logger.info("Overwriting output files")
 
     freqs = combine_fits(
-            file_list=args.file_list,
-            out_cube=out_cube,
-            freq_file=args.freq_file,
-            freq_list=args.freqs,
-            ignore_freq=args.ignore_freq,
-            create_blanks=args.create_blanks,
-            overwrite=overwrite,
-            max_workers=args.max_workers
+        file_list=args.file_list,
+        out_cube=out_cube,
+        freq_file=args.freq_file,
+        freq_list=args.freqs,
+        ignore_freq=args.ignore_freq,
+        create_blanks=args.create_blanks,
+        overwrite=overwrite,
+        max_workers=args.max_workers,
     )
 
     logger.info("Written cube to %s", out_cube)
