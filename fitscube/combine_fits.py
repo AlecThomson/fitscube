@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from io import BufferedRandom
 from pathlib import Path
 from typing import Awaitable, NamedTuple
 
@@ -73,18 +74,19 @@ class FileFrequencyInfo(NamedTuple):
 
 
 async def write_channel_to_cube_coro(
-    file_path: Path, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> Awaitable[None]:
-    with file_path.open("rb+") as file_handle:
-        seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
-        file_handle.seek(seek_length)
-        file_handle.write(plane_bytes)
+    seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
+    file_handle.seek(seek_length)
+    file_handle.write(plane_bytes)
 
 
 def write_channel_to_cube(
-    file_path: Path, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> Awaitable[None]:
-    return asyncio.run(write_channel_to_cube_coro(file_path, plane_bytes, chan, header))
+    return asyncio.run(
+        write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
+    )
 
 
 # Stolen from https://stackoverflow.com/a/61478547
@@ -546,7 +548,7 @@ def combine_fits(
 
 
 async def process_channel(
-    out_cube: Path,
+    file_handle: BufferedRandom,
     new_header: fits.Header,
     new_channel: int,
     old_channel: int,
@@ -561,7 +563,7 @@ async def process_channel(
 
     plane_bytes = plane.tobytes()
     await write_channel_to_cube_coro(
-        file_path=out_cube,
+        file_handle=file_handle,
         plane_bytes=plane_bytes,
         chan=new_channel,
         header=new_header,
@@ -624,26 +626,27 @@ async def combine_fits_coro(
     new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
     coros = []
-    for new_channel in new_channels:
-        is_missing = missing_chan_idx[new_channel]
-        old_channel = new_to_old.get(new_channel)
-        if is_missing:
-            old_channel = 0
-        if old_channel is None:
-            msg = f"Missing channel {new_channel} in input files"
-            raise ValueError(msg)
+    with out_cube.open("rb+") as file_handle:
+        for new_channel in new_channels:
+            is_missing = missing_chan_idx[new_channel]
+            old_channel = new_to_old.get(new_channel)
+            if is_missing:
+                old_channel = 0
+            if old_channel is None:
+                msg = f"Missing channel {new_channel} in input files"
+                raise ValueError(msg)
 
-        coro = process_channel(
-            out_cube=out_cube,
-            new_header=new_header,
-            new_channel=new_channel,
-            old_channel=old_channel,
-            is_missing=is_missing,
-            file_list=file_list,
-        )
-        coros.append(coro)
+            coro = process_channel(
+                file_handle=file_handle,
+                new_header=new_header,
+                new_channel=new_channel,
+                old_channel=old_channel,
+                is_missing=is_missing,
+                file_list=file_list,
+            )
+            coros.append(coro)
 
-    await gather_with_limit(max_workers, *coros, desc="Writing channels")
+        await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
     if "BMAJ" in fits.getheader(file_list[0]):
