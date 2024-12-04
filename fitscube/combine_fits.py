@@ -626,7 +626,7 @@ async def combine_fits_coro(
     missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     # Initialize the data cube
-    new_header, freq_idx, freq_fits_idx, is_2d = await create_output_cube_coro(
+    new_header, _, _, _ = await create_output_cube_coro(
         old_name=file_list[0],
         out_cube=out_cube,
         freqs=freqs,
