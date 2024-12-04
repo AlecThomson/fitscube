@@ -43,7 +43,9 @@ def pylint(session: nox.Session) -> None:
 @nox.session
 def tests(session: nox.Session) -> None:
     """Run the unit and regular tests."""
-    session.install(".[test]")
+    session.install(
+        ".[test]", "git+https://github.com/AlecThomson/radio-beam.git@escapes"
+    )
     session.run("pytest", *session.posargs)
 
 
