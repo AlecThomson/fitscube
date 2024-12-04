@@ -163,3 +163,4 @@ test.ipynb
 fitscube/_version.py
 pyproject.toml.bak
 tests.ipynb
+*.fits

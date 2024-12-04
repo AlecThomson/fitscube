@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from io import BufferedRandom
 from pathlib import Path
 from typing import Awaitable, NamedTuple, TypeVar, cast
 
-import aiofiles
 import astropy.units as u
 import numpy as np
-from aiofiles.threadpool.binary import AsyncBufferedReader
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
@@ -77,17 +76,17 @@ class FileFrequencyInfo(NamedTuple):
 
 
 async def write_channel_to_cube_coro(
-    file_handle: AsyncBufferedReader, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> None:
     msg = f"Writing channel {chan} to cube"
     logger.info(msg)
     seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
-    await file_handle.seek(seek_length)
-    await file_handle.write(plane_bytes)
+    file_handle.seek(seek_length)
+    await asyncio.to_thread(file_handle.write, plane_bytes)
 
 
 def write_channel_to_cube(
-    file_handle: AsyncBufferedReader, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> None:
     return asyncio.run(
         write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
@@ -183,7 +182,7 @@ async def create_cube_from_scratch_coro(
         out_arr = np.zeros(output_shape)
         fits.writeto(output_file, out_arr, output_header, overwrite=overwrite)
         with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
-            hdu = fits.PrimaryHDU(hdu_list[0])
+            hdu = cast(fits.PrimaryHDU, hdu_list[0])
             data = hdu.data
             on_disk_shape = data.shape
             assert (
@@ -210,7 +209,7 @@ async def create_cube_from_scratch_coro(
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
 
-    async with aiofiles.open(output_file, "rb+") as fobj:
+    with output_file.open("rb+") as fobj:
         # Seek past the length of the header, plus the length of the
         # Data we want to write.
         # 8 is the number of bytes per value, i.e. abs(header['BITPIX'])/8
@@ -221,11 +220,11 @@ async def create_cube_from_scratch_coro(
         # FITS files must be a multiple of 2880 bytes long; the final -1
         # is to account for the final byte that we are about to write.
         file_length = ((file_length + 2880 - 1) // 2880) * 2880 - 1
-        await fobj.seek(file_length)
-        await fobj.write(b"\0")
+        fobj.seek(file_length)
+        fobj.write(b"\0")
 
     with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
-        hdu = fits.PrimaryHDU(hdu_list[0])
+        hdu = cast(fits.PrimaryHDU, hdu_list[0])
         data = hdu.data
         on_disk_shape = data.shape
         assert (
@@ -561,7 +560,7 @@ def combine_fits(
 
 
 async def process_channel(
-    file_handle: AsyncBufferedReader,
+    file_handle: BufferedRandom,
     new_header: fits.Header,
     new_channel: int,
     old_channel: int,
@@ -640,7 +639,7 @@ async def combine_fits_coro(
     new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
     coros = []
-    async with aiofiles.open(out_cube, "rb+") as file_handle:
+    with out_cube.open("rb+") as file_handle:
         for new_channel in new_channels:
             is_missing = missing_chan_idx[new_channel]
             old_channel = new_to_old.get(new_channel)
@@ -666,15 +665,15 @@ async def combine_fits_coro(
     if "BMAJ" in fits.getheader(file_list[0]):
         logger.info("Extracting beam information")
         beams = parse_beams(file_list)
-        with fits.open(out_cube, memmap=True, mode="denywrite") as hdulist:
-            hdu = fits.PrimaryHDU(hdulist[0])
+        with fits.open(out_cube, memmap=True, mode="denywrite") as hdu_list:
+            hdu = cast(fits.PrimaryHDU, hdu_list[0])
             data = hdu.data
             header = hdu.header
         primary_hdu = fits.PrimaryHDU(data=data, header=header)
         logger.info("Adding beam table to primary header")
         beam_table_hdu, new_header = make_beam_table(beams, new_header)
-        new_hdulist = fits.HDUList([primary_hdu, beam_table_hdu])
-        new_hdulist.writeto(out_cube, overwrite=True)
+        new_hdu_list = fits.HDUList([primary_hdu, beam_table_hdu])
+        new_hdu_list.writeto(out_cube, overwrite=True)
 
     return freqs
 

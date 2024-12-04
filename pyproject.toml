@@ -35,7 +35,6 @@ dependencies = [
   "numpy",
   "tqdm",
   "radio_beam",
-  "aiofiles"
 ]
 
 [project.optional-dependencies]
@@ -120,9 +119,6 @@ ignore_missing_imports = true
 module = "radio_beam.*"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = "aiofiles.*"
-ignore_missing_imports = true
 
 [tool.ruff]
 src = ["fitscube"]
