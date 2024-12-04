@@ -32,7 +32,7 @@ def pylint(session: nox.Session) -> None:
     session.install(".", "pylint>=3.2")
     session.run(
         "pylint",
-        "--ignored-classes=astropy.units",
+        "--ignored-classes=astropy.units,astropy.io.fits.hdu.hdulist.HDUList",
         "--ignored-modules=radio_beam",
         "-d duplicate-code",
         "fitscube",

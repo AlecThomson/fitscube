@@ -82,7 +82,7 @@ async def write_channel_to_cube_coro(
     logger.info(msg)
     seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
     file_handle.seek(seek_length)
-    await asyncio.to_thread(file_handle.write, plane_bytes)
+    file_handle.write(plane_bytes)
 
 
 def write_channel_to_cube(
@@ -182,7 +182,7 @@ async def create_cube_from_scratch_coro(
         out_arr = np.zeros(output_shape)
         fits.writeto(output_file, out_arr, output_header, overwrite=overwrite)
         with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
-            hdu = cast(fits.PrimaryHDU, hdu_list[0])
+            hdu = hdu_list[0]
             data = hdu.data
             on_disk_shape = data.shape
             assert (
@@ -224,7 +224,7 @@ async def create_cube_from_scratch_coro(
         fobj.write(b"\0")
 
     with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
-        hdu = cast(fits.PrimaryHDU, hdu_list[0])
+        hdu = hdu_list[0]
         data = hdu.data
         on_disk_shape = data.shape
         assert (
@@ -666,7 +666,7 @@ async def combine_fits_coro(
         logger.info("Extracting beam information")
         beams = parse_beams(file_list)
         with fits.open(out_cube, memmap=True, mode="denywrite") as hdu_list:
-            hdu = cast(fits.PrimaryHDU, hdu_list[0])
+            hdu = hdu_list[0]
             data = hdu.data
             header = hdu.header
         primary_hdu = fits.PrimaryHDU(data=data, header=header)

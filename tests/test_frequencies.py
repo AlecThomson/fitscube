@@ -89,10 +89,18 @@ def test_uneven_combine(
     )
 
     assert np.allclose(freqs.to(u.Hz).value, even_freqs.to(u.Hz).value)
+    expected_spectrum = np.arange(len(even_freqs)).astype(float)
+    expected_spectrum[1:3] = np.nan
 
     cube = fits.getdata(output_file)
+    cube_spectrum = cube[:, 0, 0]
     assert cube.shape[0] == len(even_freqs)
     assert cube.shape[0] == len(freqs)
+    for i in range(len(even_freqs)):
+        if np.isnan(expected_spectrum[i]):
+            assert np.isnan(cube_spectrum[i])
+        else:
+            assert np.isclose(cube_spectrum[i], expected_spectrum[i])
     for chan in range(len(freqs)):
         image = fits.getdata(file_list[chan])
         plane = cube[chan]
