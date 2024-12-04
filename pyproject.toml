@@ -34,7 +34,8 @@ dependencies = [
   "astropy",
   "numpy",
   "tqdm",
-  "radio_beam"
+  "radio_beam",
+  "aiofiles"
 ]
 
 [project.optional-dependencies]
@@ -117,6 +118,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "radio_beam.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "aiofiles.*"
 ignore_missing_imports = true
 
 [tool.ruff]

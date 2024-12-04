@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Awaitable, NamedTuple, TypeVar, cast
 
 import aiofiles
-from aiofiles.threadpool.binary import AsyncBufferedReader
 import astropy.units as u
 import numpy as np
+from aiofiles.threadpool.binary import AsyncBufferedReader
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
@@ -79,7 +79,8 @@ class FileFrequencyInfo(NamedTuple):
 async def write_channel_to_cube_coro(
     file_handle: AsyncBufferedReader, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> None:
-    logger.info(f"Writing channel {chan} to cube")
+    msg = f"Writing channel {chan} to cube"
+    logger.info(msg)
     seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
     await file_handle.seek(seek_length)
     await file_handle.write(plane_bytes)
@@ -150,7 +151,7 @@ def even_spacing(freqs: u.Quantity) -> FrequencyInfo:
     """
     freqs_arr = freqs.value.astype(np.longdouble)
     diffs = np.diff(freqs_arr)
-    min_diff = np.min(diffs)
+    min_diff: float = np.min(diffs)
     # Create a new array with the minimum difference
     new_freqs = np_arange_fix(freqs_arr[0], freqs_arr[-1], min_diff)
     missing_chan_idx = np.logical_not(isin_close(new_freqs, freqs_arr))
@@ -366,7 +367,6 @@ async def parse_freqs_coro(
     freq_list: list[float] | None = None,
     ignore_freq: bool = False,
     create_blanks: bool = False,
-    max_workers: int | None = None,
 ) -> FileFrequencyInfo:
     """Parse the frequency information.
 
@@ -567,7 +567,8 @@ async def process_channel(
     is_missing: bool,
     file_list: list[Path],
 ) -> None:
-    logger.info(f"Processing channel {new_channel}")
+    msg = f"Processing channel {new_channel}"
+    logger.info(msg)
     if is_missing:
         plane = await asyncio.to_thread(fits.getdata, file_list[0])
         plane *= np.nan
@@ -614,7 +615,6 @@ async def combine_fits_coro(
         ignore_freq=ignore_freq,
         file_list=file_list,
         create_blanks=create_blanks,
-        max_workers=max_workers,
     )
 
     # Sort the files by frequency

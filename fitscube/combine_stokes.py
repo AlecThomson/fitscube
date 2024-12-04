@@ -78,7 +78,11 @@ def combine_stokes(
     if stokes_i.shape != stokes_u.shape:
         msg = "Stokes I and U data are not the same shape."
         raise ValueError(msg)
-    if stokes_v_file is not None and stokes_i.shape != stokes_v.shape:
+    if (
+        stokes_v_file is not None
+        and stokes_v is not None
+        and stokes_i.shape != stokes_v.shape
+    ):
         msg = "Stokes I and V data are not the same shape."
         raise ValueError(msg)
 
