@@ -178,6 +178,7 @@ messages_control.disable = [
   "missing-function-docstring",
   "wrong-import-position",
 ]
+ignored-modules = ["radio_beam"]
 
 [tool.codespell]
 ignore-words-list = "datas"
