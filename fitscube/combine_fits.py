@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from io import BufferedRandom
 from pathlib import Path
 from typing import Awaitable, NamedTuple, TypeVar, cast
 
+import aiofiles
+from aiofiles.threadpool.binary import AsyncBufferedReader
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
@@ -76,15 +77,16 @@ class FileFrequencyInfo(NamedTuple):
 
 
 async def write_channel_to_cube_coro(
-    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: AsyncBufferedReader, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> None:
+    logger.info(f"Writing channel {chan} to cube")
     seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
-    file_handle.seek(seek_length)
-    file_handle.write(plane_bytes)
+    await file_handle.seek(seek_length)
+    await file_handle.write(plane_bytes)
 
 
 def write_channel_to_cube(
-    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: AsyncBufferedReader, plane_bytes: bytes, chan: int, header: fits.Header
 ) -> None:
     return asyncio.run(
         write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
@@ -156,7 +158,7 @@ def even_spacing(freqs: u.Quantity) -> FrequencyInfo:
     return FrequencyInfo(new_freqs * freqs.unit, missing_chan_idx)
 
 
-def create_cube_from_scratch(
+async def create_cube_from_scratch_coro(
     output_file: Path,
     output_header: fits.Header,
     overwrite: bool = False,
@@ -205,7 +207,7 @@ def create_cube_from_scratch(
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
 
-    with output_file.open("rb+") as fobj:
+    async with aiofiles.open(output_file, "rb+") as fobj:
         # Seek past the length of the header, plus the length of the
         # Data we want to write.
         # 8 is the number of bytes per value, i.e. abs(header['BITPIX'])/8
@@ -216,8 +218,8 @@ def create_cube_from_scratch(
         # FITS files must be a multiple of 2880 bytes long; the final -1
         # is to account for the final byte that we are about to write.
         file_length = ((file_length + 2880 - 1) // 2880) * 2880 - 1
-        fobj.seek(file_length)
-        fobj.write(b"\0")
+        await fobj.seek(file_length)
+        await fobj.write(b"\0")
 
     with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
         hdu = hdu_list[0]
@@ -307,7 +309,7 @@ async def create_output_cube_coro(
     else:
         cube_shape[idx] = n_chan
 
-    output_header = create_cube_from_scratch(
+    output_header = await create_cube_from_scratch_coro(
         output_file=out_cube, output_header=new_header, overwrite=overwrite
     )
     return InitResult(
@@ -415,7 +417,7 @@ async def parse_freqs_coro(
             coros.append(coro)
 
         list_of_freqs = await gather_with_limit(
-            max_workers, *coros, desc="Extracting frequencies"
+            None, *coros, desc="Extracting frequencies"
         )
         file_freqs = np.array([f.to(u.Hz).value for f in list_of_freqs]) * u.Hz
 
@@ -558,13 +560,14 @@ def combine_fits(
 
 
 async def process_channel(
-    file_handle: BufferedRandom,
+    file_handle: AsyncBufferedReader,
     new_header: fits.Header,
     new_channel: int,
     old_channel: int,
     is_missing: bool,
     file_list: list[Path],
 ) -> None:
+    logger.info(f"Processing channel {new_channel}")
     if is_missing:
         plane = await asyncio.to_thread(fits.getdata, file_list[0])
         plane *= np.nan
@@ -636,7 +639,7 @@ async def combine_fits_coro(
     new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
     coros = []
-    with out_cube.open("rb+") as file_handle:
+    async with aiofiles.open(out_cube, "rb+") as file_handle:
         for new_channel in new_channels:
             is_missing = missing_chan_idx[new_channel]
             old_channel = new_to_old.get(new_channel)
