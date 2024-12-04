@@ -54,7 +54,9 @@ jobs:
           allow-prereleases: true
 
       - name: Install package
-        run: python -m pip install uv && uv pip install .[test] --system
+        run:
+          python -m pip install uv && uv pip install .[test]
+          git+https://github.com/AlecThomson/radio-beam.git@escapes --system
 
       - name: Test package
         run: >-
