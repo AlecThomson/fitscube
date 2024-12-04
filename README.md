@@ -69,7 +69,7 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 
 Command line:
 
-```bash
+```
 ❯ fitscube -h
 usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] [-v] [--max-workers MAX_WORKERS] file_list [file_list ...] out_cube
 
