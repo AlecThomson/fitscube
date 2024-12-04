@@ -69,46 +69,29 @@ pip install git+https://github.com/AlecThomson/fitscube.git
 
 Command line:
 
-```bash
-fitscube -h
-# usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] [-v] file_list [file_list ...] out_cube
-#
-# Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS axis or  in the REFFREQ header
-# keyword - All the relevant information is in the first header of the first image
-#
-# positional arguments:
-#   file_list             List of FITS files to combine (in frequency order)
-#   out_cube              Output FITS file
-#
-# options:
-#   -h, --help            show this help message and exit
-#   -o, --overwrite       Overwrite output file if it exists
-#   --create-blanks       Try to create a blank cube with evenly spaced frequencies
-#   --freq-file FREQ_FILE
-#                         File containing frequencies in Hz
-#   --freqs FREQS [FREQS ...]
-#                         List of frequencies in Hz
-#   --ignore-freq         Ignore frequency information and just stack (probably not what you want)
-#   -v, --verbosity       Increase output verbosity
+```
+❯ fitscube -h
+usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] [-v] [--max-workers MAX_WORKERS] file_list [file_list ...] out_cube
 
-stokescube -h
-# usage: stokescube [-h] [-V STOKES_V_FILE] [-o] [-v] stokes_I_file stokes_Q_file stokes_U_file output_file
-#
-# Fitscube: Combine single-Stokes FITS files into a Stokes cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant information # is in the first header of
-# the first image
-#
-# positional arguments:
-#   stokes_I_file         Stokes I file
-#   stokes_Q_file         Stokes Q file
-#   stokes_U_file         Stokes U file
-#   output_file           Output file
-#
-# options:
-#   -h, --help            show this help message and exit
-#   -V STOKES_V_FILE, --stokes_V_file STOKES_V_FILE
-#                         Stokes V file
-#   -o, --overwrite       Overwrite output file if it exists
-#   -v, --verbosity       Increase output verbosity
+Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS axis or in the REFFREQ header keyword -
+All the relevant information is in the first header of the first image
+
+positional arguments:
+  file_list             List of FITS files to combine (in frequency order)
+  out_cube              Output FITS file
+
+options:
+  -h, --help            show this help message and exit
+  -o, --overwrite       Overwrite output file if it exists
+  --create-blanks       Try to create a blank cube with evenly spaced frequencies
+  --freq-file FREQ_FILE
+                        File containing frequencies in Hz
+  --freqs FREQS [FREQS ...]
+                        List of frequencies in Hz
+  --ignore-freq         Ignore frequency information and just stack (probably not what you want)
+  -v, --verbosity       Increase output verbosity
+  --max-workers MAX_WORKERS
+                        Maximum number of workers to use for concurrent processing
 ```
 
 Python:
@@ -116,17 +99,12 @@ Python:
 ```python
 from pathlib import Path
 
-from fitscube import combine_fits, combine_stokes
+from fitscube import combine_fits
 
 file_list = list(Path().glob("*.fits"))
 
-hdu_list, frequencies = combine_fits(
+frequencies = combine_fits(
     file_list
-)
-hdu_stokes_list = combine_stokes(
-    Path("stokes_I.fits"),
-    Path("stokes_Q.fits"),
-    Path("stokes_U.fits"),
 )
 ```
 

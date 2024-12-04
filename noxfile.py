@@ -32,7 +32,8 @@ def pylint(session: nox.Session) -> None:
     session.install(".", "pylint>=3.2")
     session.run(
         "pylint",
-        "--ignored-classes=astropy.units",
+        "--ignored-classes=astropy.units,astropy.io.fits.hdu.hdulist.HDUList",
+        "--ignored-modules=radio_beam",
         "-d duplicate-code",
         "fitscube",
         *session.posargs,
@@ -42,7 +43,9 @@ def pylint(session: nox.Session) -> None:
 @nox.session
 def tests(session: nox.Session) -> None:
     """Run the unit and regular tests."""
-    session.install(".[test]")
+    session.install(
+        ".[test]", "git+https://github.com/AlecThomson/radio-beam.git@escapes"
+    )
     session.run("pytest", *session.posargs)
 
 

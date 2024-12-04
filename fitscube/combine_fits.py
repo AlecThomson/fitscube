@@ -12,111 +12,246 @@ Assumes:
 from __future__ import annotations
 
 import argparse
+import asyncio
+from io import BufferedRandom
 from pathlib import Path
-from typing import NamedTuple
+from typing import Awaitable, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
+from numpy.typing import ArrayLike
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
-from tqdm.auto import tqdm
+from tqdm.asyncio import tqdm
 
 from fitscube.logging import set_verbosity, setup_logger
 
 logger = setup_logger()
 
+T = TypeVar("T")
+
+# store the number of bytes per value in a dictionary
+BIT_DICT = {
+    64: 8,
+    32: 4,
+    16: 2,
+    8: 1,
+}
+
 
 class InitResult(NamedTuple):
     """Initialization result."""
 
-    data_cube: np.ndarray
-    """Output data cube"""
     header: fits.Header
     """Output header"""
-    idx: int
+    freq_idx: int
     """Index of frequency axis"""
-    fits_idx: int
+    freq_fits_idx: int
     """FITS index of frequency axis"""
     is_2d: bool
     """Whether the input is 2D"""
 
 
-def isin_close(element: np.ndarray, test_element: np.ndarray) -> np.ndarray:
+class FrequencyInfo(NamedTuple):
+    """Frequency information."""
+
+    freqs: u.Quantity
+    """Frequencies"""
+    missing_chan_idx: ArrayLike
+    """Missing channel indices"""
+
+
+class FileFrequencyInfo(NamedTuple):
+    """File frequency information."""
+
+    file_freqs: u.Quantity
+    """Frequencies matching each file"""
+    freqs: u.Quantity
+    """Frequencies"""
+    missing_chan_idx: ArrayLike
+    """Missing channel indices"""
+
+
+async def write_channel_to_cube_coro(
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+) -> None:
+    msg = f"Writing channel {chan} to cube"
+    logger.info(msg)
+    seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
+    file_handle.seek(seek_length)
+    file_handle.write(plane_bytes)
+
+
+def write_channel_to_cube(
+    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+) -> None:
+    return asyncio.run(
+        write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
+    )
+
+
+# Stolen from https://stackoverflow.com/a/61478547
+async def gather_with_limit(
+    limit: int | None, *coros: Awaitable[T], desc: str | None = None
+) -> list[T]:
+    """Gather with a limit on the number of coroutines running at once.
+
+    Args:
+        limit (int): The number of coroutines to run at once
+        coros (Awaitable): The coroutines to run
+
+    Returns:
+        Awaitable: The result of the coroutines
+    """
+    if limit is None:
+        return cast(list[T], await tqdm.gather(*coros, desc=desc))
+
+    semaphore = asyncio.Semaphore(limit)
+
+    async def sem_coro(coro: Awaitable[T]) -> T:
+        async with semaphore:
+            return await coro
+
+    return cast(list[T], await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc))
+
+
+# https://stackoverflow.com/a/66082278
+def np_arange_fix(start: float, stop: float, step: float) -> ArrayLike:
+    n = (stop - start) / step + 1
+    x = n - int(n)
+    stop += step * max(0.1, x) if x < 0.5 else 0
+    return np.arange(start, stop, step)
+
+
+def isin_close(element: ArrayLike, test_element: ArrayLike) -> ArrayLike:
     """Check if element is in test_element, within a tolerance.
 
     Args:
-        element (np.ndarray): Element to check
-        test_element (np.ndarray): Element to check against
+        element (ArrayLike): Element to check
+        test_element (ArrayLike): Element to check against
 
     Returns:
-        np.ndarray: Boolean array
+        ArrayLike: Boolean array
     """
     return np.isclose(element[:, None], test_element).any(1)
 
 
-def even_spacing(freqs: u.Quantity) -> tuple[u.Quantity, np.ndarray]:
+def even_spacing(freqs: u.Quantity) -> FrequencyInfo:
     """Make the frequencies evenly spaced.
 
     Args:
         freqs (u.Quantity): Original frequencies
 
     Returns:
-        Tuple[u.Quantity, np.ndarray]: Evenly spaced frequencies and missing channel indices
+        FrequencyInfo: freqs, missing_chan_idx
     """
     freqs_arr = freqs.value.astype(np.longdouble)
     diffs = np.diff(freqs_arr)
-    min_diff = np.min(diffs)
+    min_diff: float = np.min(diffs)
     # Create a new array with the minimum difference
-    new_freqs = np.arange(freqs_arr[0], freqs_arr[-1], min_diff)
-    missing_chan_idx = ~isin_close(new_freqs, freqs_arr)
+    new_freqs = np_arange_fix(freqs_arr[0], freqs_arr[-1], min_diff)
+    missing_chan_idx = np.logical_not(isin_close(new_freqs, freqs_arr))
 
-    return new_freqs * freqs.unit, missing_chan_idx
-
-
-def create_blank_data(
-    data_cube: np.ndarray,
-    freqs: u.Quantity,
-    idx: int,
-) -> tuple[np.ndarray | None, u.Quantity]:
-    """Create a new data cube with evenly spaced frequencies, and fill in the missing channels with NaNs.
-
-    Args:
-        data_cube (np.ndarray): Original data cube
-        freqs (u.Quantity): Original frequencies
-        idx: Index of frequency axis
-
-    Returns:
-        Tuple[Optional[np.ndarray], u.Quantity]: New data cube and frequencies
-    """
-    new_freqs, _ = even_spacing(freqs)
-    # Check if all frequencies present
-    all_there = isin_close(freqs, new_freqs).all()
-    if not all_there:
-        return None, new_freqs
-
-    # Create a new data cube with the new frequencies
-    new_shape = list(data_cube.shape)
-    new_shape[idx] = len(new_freqs)
-    new_data_cube = np.empty(new_shape) * np.nan
-    for old_chan, freq in enumerate(freqs):
-        new_chans = np.where(np.isclose(new_freqs, freq))[0]
-        assert len(new_chans) == 1, "Too many matching channels"
-        new_chan = int(new_chans[0])
-        new_slice: list[slice | int] = [slice(None)] * len(new_shape)
-        new_slice[idx] = new_chan
-        old_slice: list[slice | int] = [slice(None)] * len(new_shape)
-        old_slice[idx] = old_chan
-        new_data_cube[tuple(new_slice)] = data_cube[tuple(old_slice)]
-
-    return new_data_cube, new_freqs
+    return FrequencyInfo(new_freqs * freqs.unit, missing_chan_idx)
 
 
-def init_cube(
+async def create_cube_from_scratch_coro(
+    output_file: Path,
+    output_header: fits.Header,
+    overwrite: bool = False,
+) -> fits.Header:
+    if output_file.exists() and not overwrite:
+        msg = f"Output file {output_file} already exists."
+        raise FileExistsError(msg)
+
+    if output_file.exists() and overwrite:
+        output_file.unlink()
+
+    output_wcs = WCS(output_header)
+    output_shape = output_wcs.array_shape
+    msg = f"Creating a new FITS file with shape {output_shape}"
+    logger.info(msg)
+    # If the output shape is less than 1801, we can create a blank array
+    # in memory and write it to disk
+    if np.prod(output_shape) < 1801:
+        msg = "Output cube is small enough to create in memory"
+        logger.warning(msg)
+        out_arr = np.zeros(output_shape)
+        fits.writeto(output_file, out_arr, output_header, overwrite=overwrite)
+        with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
+            hdu = hdu_list[0]
+            data = hdu.data
+            on_disk_shape = data.shape
+            assert (
+                data.shape == output_shape
+            ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
+        return fits.getheader(output_file)
+
+    logger.info("Output cube is too large to create in memory. Creating a blank file.")
+
+    small_size = [1 for _ in output_shape]
+    data = np.zeros(small_size)
+    hdu = fits.PrimaryHDU(data)
+    header = hdu.header
+    while len(header) < (36 * 4 - 1):
+        header.append()  # Adds a blank card to the end
+
+    for key, value in output_header.items():
+        header[key] = value
+
+    header.tofile(output_file, overwrite=overwrite)
+
+    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
+    if bytes_per_value is None:
+        msg = f"BITPIX value {output_header['BITPIX']} not recognized"
+        raise ValueError(msg)
+
+    with output_file.open("rb+") as fobj:
+        # Seek past the length of the header, plus the length of the
+        # Data we want to write.
+        # 8 is the number of bytes per value, i.e. abs(header['BITPIX'])/8
+        # (this example is assuming a 64-bit float)
+        file_length = len(output_header.tostring()) + (
+            np.prod(output_shape) * np.abs(output_header["BITPIX"] // bytes_per_value)
+        )
+        # FITS files must be a multiple of 2880 bytes long; the final -1
+        # is to account for the final byte that we are about to write.
+        file_length = ((file_length + 2880 - 1) // 2880) * 2880 - 1
+        fobj.seek(file_length)
+        fobj.write(b"\0")
+
+    with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
+        hdu = hdu_list[0]
+        data = hdu.data
+        on_disk_shape = data.shape
+        assert (
+            on_disk_shape == output_shape
+        ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
+
+    return fits.getheader(output_file)
+
+
+def create_output_cube(
     old_name: Path,
-    n_chan: int,
+    out_cube: Path,
+    freqs: u.Quantity,
+    ignore_freq: bool = False,
+    overwrite: bool = False,
+) -> InitResult:
+    return asyncio.run(
+        create_output_cube_coro(old_name, out_cube, freqs, ignore_freq, overwrite)
+    )
+
+
+async def create_output_cube_coro(
+    old_name: Path,
+    out_cube: Path,
+    freqs: u.Quantity,
+    ignore_freq: bool = False,
+    overwrite: bool = False,
 ) -> InitResult:
     """Initialize the data cube.
 
@@ -129,12 +264,18 @@ def init_cube(
         ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        InitResult: Output data cube, header, index of frequency axis, FITS index, and if 2D
+        InitResult: header, freq_idx, freq_fits_idx, is_2d
     """
-    old_header = fits.getheader(old_name)
-    old_data = fits.getdata(old_name)
+    old_data, old_header = fits.getdata(old_name, header=True)
+    even_freq = np.diff(freqs).std() < (1e-4 * u.Hz)
+    if not even_freq:
+        logger.warning("Frequencies are not evenly spaced")
+
+    n_chan = len(freqs)
+
     is_2d = len(old_data.shape) == 2
     idx = 0
+    fits_idx = 3
     if not is_2d:
         logger.info("Input image is a cube. Looking for FREQ axis.")
         wcs = WCS(old_header)
@@ -147,6 +288,21 @@ def init_cube(
         fits_idx = wcs.axis_type_names.index("FREQ") + 1
         logger.info("FREQ axis found at index %s (NAXIS%s)", idx, fits_idx)
 
+    new_header = old_header.copy()
+    new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
+    new_header[f"NAXIS{fits_idx}"] = n_chan
+    new_header[f"CRPIX{fits_idx}"] = 1
+    new_header[f"CRVAL{fits_idx}"] = freqs[0].value
+    new_header[f"CDELT{fits_idx}"] = np.diff(freqs).mean().value
+    new_header[f"CUNIT{fits_idx}"] = "Hz"
+    new_header[f"CTYPE{fits_idx}"] = "FREQ"
+
+    if ignore_freq or not even_freq:
+        new_header[f"CDELT{fits_idx}"] = 1
+        del new_header[f"CUNIT{fits_idx}"]
+        new_header[f"CTYPE{fits_idx}"] = "CHAN"
+        new_header[f"CRVAL{fits_idx}"] = 1
+
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
     if is_2d:
@@ -154,16 +310,64 @@ def init_cube(
     else:
         cube_shape[idx] = n_chan
 
-    data_cube = np.zeros(cube_shape) * np.nan
-    return InitResult(data_cube, old_header, idx, fits_idx, is_2d)
+    output_header = await create_cube_from_scratch_coro(
+        output_file=out_cube, output_header=new_header, overwrite=overwrite
+    )
+    return InitResult(
+        header=output_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
+    )
+
+
+def read_freq_from_header(image_path: Path) -> u.Quantity:
+    return asyncio.run(read_freq_from_header_coro(image_path))
+
+
+async def read_freq_from_header_coro(
+    image_path: Path,
+) -> u.Quantity:
+    header = await asyncio.to_thread(fits.getheader, image_path)
+    wcs = WCS(header)
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
+    is_2d = len(array_shape) == 2
+    if is_2d:
+        try:
+            freq = await asyncio.to_thread(header.get, "REFFREQ")
+            return freq * u.Hz
+        except KeyError as e:
+            msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
+            raise KeyError(msg) from e
+    try:
+        if "SPECSYS" not in header:
+            header["SPECSYS"] = "TOPOCENT"
+        wcs = WCS(header)
+        return wcs.spectral.pixel_to_world(0).to(u.Hz)
+    except Exception as e:
+        msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
+        raise ValueError(msg) from e
 
 
 def parse_freqs(
     file_list: list[Path],
     freq_file: Path | None = None,
     freq_list: list[float] | None = None,
-    ignore_freq: bool | None = False,
-) -> u.Quantity:
+    ignore_freq: bool = False,
+    create_blanks: bool = False,
+) -> FileFrequencyInfo:
+    return asyncio.run(
+        parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks)
+    )
+
+
+async def parse_freqs_coro(
+    file_list: list[Path],
+    freq_file: Path | None = None,
+    freq_list: list[float] | None = None,
+    ignore_freq: bool = False,
+    create_blanks: bool = False,
+) -> FileFrequencyInfo:
     """Parse the frequency information.
 
     Args:
@@ -178,11 +382,15 @@ def parse_freqs(
         ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        u.Quantity: List of frequencies
+        FileFrequencyInfo: file_freqs, freqs, missing_chan_idx
     """
     if ignore_freq:
         logger.info("Ignoring frequency information")
-        return np.arange(len(file_list)) * u.Hz
+        return FileFrequencyInfo(
+            file_freqs=np.arange(len(file_list)) * u.Hz,
+            freqs=np.arange(len(file_list)) * u.Hz,
+            missing_chan_idx=np.zeros(len(file_list)).astype(bool),
+        )
 
     if freq_file is not None and freq_list is not None:
         msg = "Must specify either freq_file or freq_list, not both"
@@ -190,34 +398,40 @@ def parse_freqs(
 
     if freq_file is not None:
         logger.info("Reading frequencies from %s", freq_file)
-        return np.loadtxt(freq_file) * u.Hz
+        file_freqs = np.loadtxt(freq_file) * u.Hz
+        assert (
+            len(file_freqs) == len(file_list)
+        ), f"Number of frequencies in {freq_file} ({len({file_freqs})}) does not match number of images ({len(file_list)})"
+        missing_chan_idx = np.zeros(len(file_list)).astype(bool)
 
-    logger.info("Reading frequencies from FITS files")
-    freqs = np.arange(len(file_list)) * u.Hz
-    for chan, image in enumerate(
-        tqdm(
-            file_list,
-            desc="Extracting frequencies",
+    else:
+        logger.info("Reading frequencies from FITS files")
+        first_header = fits.getheader(file_list[0])
+        if "SPECSYS" not in first_header:
+            logger.warning("SPECSYS not in header(s). Will set to TOPOCENT")
+        # file_freqs = np.arange(len(file_list)) * u.Hz
+        missing_chan_idx = np.zeros(len(file_list)).astype(bool)
+        coros = []
+        for image_path in file_list:
+            coro = read_freq_from_header_coro(image_path)
+            coros.append(coro)
+
+        list_of_freqs = await gather_with_limit(
+            None, *coros, desc="Extracting frequencies"
         )
-    ):
-        plane = fits.getdata(image)
-        is_2d = len(plane.shape) == 2
-        header = fits.getheader(image)
-        if is_2d:
-            try:
-                freqs[chan] = header["REFFREQ"] * u.Hz
-            except KeyError as e:
-                msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
-                raise KeyError(msg) from e
-        else:
-            try:
-                freq = WCS(header).spectral.pixel_to_world(0)
-                freqs[chan] = freq.to(u.Hz)
-            except Exception as e:
-                msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
-                raise ValueError(msg) from e
+        file_freqs = np.array([f.to(u.Hz).value for f in list_of_freqs]) * u.Hz
 
-    return freqs
+        freqs = file_freqs.copy()
+
+    if create_blanks:
+        logger.info("Trying to create a blank cube with evenly spaced frequencies")
+        freqs, missing_chan_idx = even_spacing(file_freqs)
+
+    return FileFrequencyInfo(
+        file_freqs=file_freqs,
+        freqs=freqs,
+        missing_chan_idx=missing_chan_idx,
+    )
 
 
 def parse_beams(
@@ -260,9 +474,13 @@ def get_polarisation(header: fits.Header) -> int:
         int: Polarisation axis (in FITS)
     """
     wcs = WCS(header)
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
 
     for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, wcs.array_shape[::-1], wcs.wcs.crpix)
+        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix)
     ):
         if ctype == "STOKES":
             assert (
@@ -319,11 +537,64 @@ def make_beam_table(
 
 def combine_fits(
     file_list: list[Path],
+    out_cube: Path,
     freq_file: Path | None = None,
     freq_list: list[float] | None = None,
     ignore_freq: bool = False,
     create_blanks: bool = False,
-) -> tuple[fits.HDUList, u.Quantity]:
+    overwrite: bool = False,
+    max_workers: int | None = None,
+) -> u.Quantity:
+    return asyncio.run(
+        combine_fits_coro(
+            file_list=file_list,
+            out_cube=out_cube,
+            freq_file=freq_file,
+            freq_list=freq_list,
+            ignore_freq=ignore_freq,
+            create_blanks=create_blanks,
+            overwrite=overwrite,
+            max_workers=max_workers,
+        )
+    )
+
+
+async def process_channel(
+    file_handle: BufferedRandom,
+    new_header: fits.Header,
+    new_channel: int,
+    old_channel: int,
+    is_missing: bool,
+    file_list: list[Path],
+) -> None:
+    msg = f"Processing channel {new_channel}"
+    logger.info(msg)
+    if is_missing:
+        plane = await asyncio.to_thread(fits.getdata, file_list[0])
+        plane *= np.nan
+    else:
+        plane = await asyncio.to_thread(fits.getdata, file_list[old_channel])
+
+    plane_bytes = plane.tobytes()
+    await write_channel_to_cube_coro(
+        file_handle=file_handle,
+        plane_bytes=plane_bytes,
+        chan=new_channel,
+        header=new_header,
+    )
+    del plane, plane_bytes
+
+
+async def combine_fits_coro(
+    file_list: list[Path],
+    out_cube: Path,
+    freq_file: Path | None = None,
+    freq_list: list[float] | None = None,
+    ignore_freq: bool = False,
+    create_blanks: bool = False,
+    overwrite: bool = False,
+    max_workers: int | None = None,
+) -> u.Quantity:
     """Combine FITS files into a cube.
 
     Args:
@@ -338,96 +609,73 @@ def combine_fits(
     """
     # TODO: Check that all files have the same WCS
 
-    n_images = len(file_list)
-
-    freqs = parse_freqs(
+    file_freqs, freqs, missing_chan_idx = await parse_freqs_coro(
         freq_file=freq_file,
         freq_list=freq_list,
         ignore_freq=ignore_freq,
         file_list=file_list,
+        create_blanks=create_blanks,
     )
-
-    assert (
-        len(freqs) == n_images
-    ), "Number of frequencies does not match number of images"
-
-    # Sort the frequencies
-    sort_idx = np.argsort(freqs)
-    freqs = freqs[sort_idx]
 
     # Sort the files by frequency
-    file_list = np.array(file_list)[sort_idx].tolist()
+    old_sort_idx = np.argsort(file_freqs)
+    file_list = np.array(file_list)[old_sort_idx].tolist()
+    new_sort_idx = np.argsort(freqs)
+    freqs = freqs[new_sort_idx]
+    missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     # Initialize the data cube
-    init_res = init_cube(
+    new_header, _, _, _ = await create_output_cube_coro(
         old_name=file_list[0],
-        n_chan=len(file_list),
+        out_cube=out_cube,
+        freqs=freqs,
+        ignore_freq=ignore_freq,
+        overwrite=overwrite,
     )
-    data_cube = init_res.data_cube
-    old_header = init_res.header
-    idx = init_res.idx
-    fits_idx = init_res.fits_idx
-    is_2d = init_res.is_2d
 
-    for chan, image in enumerate(
-        tqdm(
-            file_list,
-            desc="Reading channel image",
-        )
-    ):
-        plane = fits.getdata(image)
-        slicer: list[slice | int] = [slice(None)] * len(plane.shape)
-        if is_2d:
-            slicer.insert(0, chan)
-        else:
-            slicer[idx] = chan
-        data_cube[tuple(slicer)] = plane
+    new_channels = np.arange(len(freqs))
+    old_channels = np.arange(len(file_freqs))
 
-    # Write out cubes
-    even_freq = np.diff(freqs).std() < 1e-6 * u.Hz
-    if not even_freq and create_blanks:
-        logger.info("Trying to create a blank cube with evenly spaced frequencies")
-        new_data_cube, new_freqs = create_blank_data(
-            data_cube=data_cube,
-            freqs=freqs,
-            idx=idx,
-        )
-        if new_data_cube is not None:
-            even_freq = True
-            data_cube = new_data_cube
-            freqs = new_freqs
+    new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
-    if not even_freq:
-        logger.warning("Frequencies are not evenly spaced")
-        logger.info("Use the frequency file to specify the frequencies")
+    coros = []
+    with out_cube.open("rb+") as file_handle:
+        for new_channel in new_channels:
+            is_missing = missing_chan_idx[new_channel]
+            old_channel = new_to_old.get(new_channel)
+            if is_missing:
+                old_channel = 0
+            if old_channel is None:
+                msg = f"Missing channel {new_channel} in input files"
+                raise ValueError(msg)
 
-    new_header = old_header.copy()
-    new_header["NAXIS"] = len(data_cube.shape)
-    new_header[f"NAXIS{fits_idx}"] = len(freqs)
-    new_header[f"CRPIX{fits_idx}"] = 1
-    new_header[f"CRVAL{fits_idx}"] = freqs[0].value
-    new_header[f"CDELT{fits_idx}"] = np.diff(freqs).mean().value
-    new_header[f"CUNIT{fits_idx}"] = "Hz"
-    new_header[f"CTYPE{fits_idx}"] = "FREQ"
-    if ignore_freq or not even_freq:
-        new_header[f"CDELT{fits_idx}"] = 1
-        del new_header[f"CUNIT{fits_idx}"]
-        new_header[f"CTYPE{fits_idx}"] = "CHAN"
-        new_header[f"CRVAL{fits_idx}"] = 1
+            coro = process_channel(
+                file_handle=file_handle,
+                new_header=new_header,
+                new_channel=new_channel,
+                old_channel=old_channel,
+                is_missing=is_missing,
+                file_list=file_list,
+            )
+            coros.append(coro)
+
+        await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
-    has_beams = "BMAJ" in fits.getheader(file_list[0])
-    if has_beams:
+    if "BMAJ" in fits.getheader(file_list[0]):
+        logger.info("Extracting beam information")
         beams = parse_beams(file_list)
-        beam_table, new_header = make_beam_table(beams, new_header)
+        with fits.open(out_cube, memmap=True, mode="denywrite") as hdu_list:
+            hdu = hdu_list[0]
+            data = hdu.data
+            header = hdu.header
+        primary_hdu = fits.PrimaryHDU(data=data, header=header)
+        logger.info("Adding beam table to primary header")
+        beam_table_hdu, new_header = make_beam_table(beams, new_header)
+        new_hdu_list = fits.HDUList([primary_hdu, beam_table_hdu])
+        new_hdu_list.writeto(out_cube, overwrite=True)
 
-    hdu = fits.PrimaryHDU(data_cube, header=new_header)
-    hdu_python_list = [hdu]
-    if has_beams:
-        hdu_python_list.append(beam_table)
-    hdul = fits.HDUList(hdu_python_list)
-
-    return hdul, freqs
+    return freqs
 
 
 def cli() -> None:
@@ -474,6 +722,12 @@ def cli() -> None:
     parser.add_argument(
         "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
     )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum number of workers to use for concurrent processing",
+    )
     args = parser.parse_args()
 
     set_verbosity(
@@ -494,15 +748,17 @@ def cli() -> None:
     if overwrite:
         logger.info("Overwriting output files")
 
-    hdul, freqs = combine_fits(
+    freqs = combine_fits(
         file_list=args.file_list,
+        out_cube=out_cube,
         freq_file=args.freq_file,
         freq_list=args.freqs,
         ignore_freq=args.ignore_freq,
         create_blanks=args.create_blanks,
+        overwrite=overwrite,
+        max_workers=args.max_workers,
     )
 
-    hdul.writeto(out_cube, overwrite=overwrite)
     logger.info("Written cube to %s", out_cube)
     np.savetxt(freqs_file, freqs.to(u.Hz).value)
     logger.info("Written frequencies to %s", freqs_file)

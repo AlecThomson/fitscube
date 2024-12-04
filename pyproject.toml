@@ -34,7 +34,7 @@ dependencies = [
   "astropy",
   "numpy",
   "tqdm",
-  "radio_beam"
+  "radio_beam",
 ]
 
 [project.optional-dependencies]
@@ -98,7 +98,7 @@ report.exclude_also = [
 
 [tool.mypy]
 files = ["fitscube", "tests"]
-python_version = "3.8"
+python_version = "3.9"
 warn_unused_configs = true
 strict = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
@@ -114,6 +114,11 @@ disallow_incomplete_defs = true
 [[tool.mypy.overrides]]
 module = "astropy.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "radio_beam.*"
+ignore_missing_imports = true
+
 
 [tool.ruff]
 src = ["fitscube"]
@@ -157,7 +162,7 @@ isort.required-imports = ["from __future__ import annotations"]
 
 
 [tool.pylint]
-py-version = "3.8"
+py-version = "3.9"
 ignore-paths = [".*/_version.py"]
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
@@ -169,6 +174,7 @@ messages_control.disable = [
   "missing-function-docstring",
   "wrong-import-position",
 ]
+ignored-modules = ["radio_beam"]
 
 [tool.codespell]
 ignore-words-list = "datas"
