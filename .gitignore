@@ -162,3 +162,4 @@ test.ipynb
 .vscode/settings.json
 fitscube/_version.py
 pyproject.toml.bak
+tests.ipynb

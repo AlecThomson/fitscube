@@ -15,7 +15,7 @@ import argparse
 import asyncio
 from io import BufferedRandom
 from pathlib import Path
-from typing import Awaitable, NamedTuple
+from typing import Awaitable, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
@@ -30,6 +30,8 @@ from tqdm.asyncio import tqdm
 from fitscube.logging import set_verbosity, setup_logger
 
 logger = setup_logger()
+
+T = TypeVar("T")
 
 # store the number of bytes per value in a dictionary
 BIT_DICT = {
@@ -75,7 +77,7 @@ class FileFrequencyInfo(NamedTuple):
 
 async def write_channel_to_cube_coro(
     file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
-) -> Awaitable[None]:
+) -> None:
     seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
     file_handle.seek(seek_length)
     file_handle.write(plane_bytes)
@@ -83,7 +85,7 @@ async def write_channel_to_cube_coro(
 
 def write_channel_to_cube(
     file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
-) -> Awaitable[None]:
+) -> None:
     return asyncio.run(
         write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
     )
@@ -91,8 +93,8 @@ def write_channel_to_cube(
 
 # Stolen from https://stackoverflow.com/a/61478547
 async def gather_with_limit(
-    limit: int | None, *coros: Awaitable, desc: str | None = None
-) -> Awaitable:
+    limit: int | None, *coros: Awaitable[T], desc: str | None = None
+) -> list[T]:
     """Gather with a limit on the number of coroutines running at once.
 
     Args:
@@ -103,15 +105,15 @@ async def gather_with_limit(
         Awaitable: The result of the coroutines
     """
     if limit is None:
-        return await tqdm.gather(*coros, desc=desc)
+        return cast(list[T], await tqdm.gather(*coros, desc=desc))
 
     semaphore = asyncio.Semaphore(limit)
 
-    async def sem_coro(coro: Awaitable):
+    async def sem_coro(coro: Awaitable[T]) -> T:
         async with semaphore:
             return await coro
 
-    return await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc)
+    return cast(list[T], await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc))
 
 
 # https://stackoverflow.com/a/66082278
@@ -247,7 +249,7 @@ async def create_output_cube_coro(
     freqs: u.Quantity,
     ignore_freq: bool = False,
     overwrite: bool = False,
-) -> Awaitable[InitResult]:
+) -> InitResult:
     """Initialize the data cube.
 
     Args:
@@ -319,10 +321,14 @@ def read_freq_from_header(image_path: Path) -> u.Quantity:
 
 async def read_freq_from_header_coro(
     image_path: Path,
-) -> Awaitable[u.Quantity]:
+) -> u.Quantity:
     header = await asyncio.to_thread(fits.getheader, image_path)
     wcs = WCS(header)
-    is_2d = len(wcs.array_shape) == 2
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
+    is_2d = len(array_shape) == 2
     if is_2d:
         try:
             freq = await asyncio.to_thread(header.get, "REFFREQ")
@@ -359,7 +365,7 @@ async def parse_freqs_coro(
     ignore_freq: bool = False,
     create_blanks: bool = False,
     max_workers: int | None = None,
-) -> Awaitable[FileFrequencyInfo]:
+) -> FileFrequencyInfo:
     """Parse the frequency information.
 
     Args:
@@ -466,9 +472,13 @@ def get_polarisation(header: fits.Header) -> int:
         int: Polarisation axis (in FITS)
     """
     wcs = WCS(header)
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
 
     for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, wcs.array_shape[::-1], wcs.wcs.crpix)
+        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix)
     ):
         if ctype == "STOKES":
             assert (
@@ -554,7 +564,7 @@ async def process_channel(
     old_channel: int,
     is_missing: bool,
     file_list: list[Path],
-):
+) -> None:
     if is_missing:
         plane = await asyncio.to_thread(fits.getdata, file_list[0])
         plane *= np.nan
@@ -580,7 +590,7 @@ async def combine_fits_coro(
     create_blanks: bool = False,
     overwrite: bool = False,
     max_workers: int | None = None,
-) -> Awaitable[u.Quantity]:
+) -> u.Quantity:
     """Combine FITS files into a cube.
 
     Args:

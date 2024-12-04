@@ -75,28 +75,28 @@ def test_even_combine(file_list: list[Path], even_freqs: u.Quantity, output_file
         assert np.allclose(plane, image)
 
 
-# def test_uneven_combine(
-#     file_list: list[Path], even_freqs: u.Quantity, output_file: Path
-# ):
-#     # unven_freqs = np.concatenate([even_freqs[0:1], even_freqs[3:]])
-#     file_array = np.array(file_list)
-#     uneven_files = np.concatenate([file_array[0:1], file_array[3:]]).tolist()
-#     freqs = combine_fits(
-#         file_list=uneven_files,
-#         out_cube=output_file,
-#         create_blanks=True,
-#         overwrite=True,
-#     )
+def test_uneven_combine(
+    file_list: list[Path], even_freqs: u.Quantity, output_file: Path
+):
+    # unven_freqs = np.concatenate([even_freqs[0:1], even_freqs[3:]])
+    file_array = np.array(file_list)
+    uneven_files = np.concatenate([file_array[0:1], file_array[3:]]).tolist()
+    freqs = combine_fits(
+        file_list=uneven_files,
+        out_cube=output_file,
+        create_blanks=True,
+        overwrite=True,
+    )
 
-#     assert np.allclose(freqs.to(u.Hz).value, even_freqs.to(u.Hz).value)
+    assert np.allclose(freqs.to(u.Hz).value, even_freqs.to(u.Hz).value)
 
-#     cube = fits.getdata(output_file)
-#     assert cube.shape[0] == len(even_freqs)
-#     assert cube.shape[0] == len(freqs)
-#     for chan in range(len(freqs)):
-#         image = fits.getdata(file_list[chan])
-#         plane = cube[chan]
-#         if np.isnan(plane).all():
-#             assert chan in (1, 2)
-#             continue
-#         assert np.allclose(plane, image)
+    cube = fits.getdata(output_file)
+    assert cube.shape[0] == len(even_freqs)
+    assert cube.shape[0] == len(freqs)
+    for chan in range(len(freqs)):
+        image = fits.getdata(file_list[chan])
+        plane = cube[chan]
+        if np.isnan(plane).all():
+            assert chan in (1, 2)
+            continue
+        assert np.allclose(plane, image)
