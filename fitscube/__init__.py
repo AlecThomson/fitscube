@@ -1,4 +1,4 @@
-"""Combine FITS cubes and Stokes cubes."""
+"""Combine FITS cubes."""
 
 from __future__ import annotations
 

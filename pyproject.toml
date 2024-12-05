@@ -63,7 +63,6 @@ Changelog = "https://github.com/AlecThomson/fitscube/releases"
 
 [project.scripts]
 fitscube = "fitscube.combine_fits:cli"
-stokescube = "fitscube.combine_stokes:cli"
 
 [tool.hatch]
 version.source = "vcs"

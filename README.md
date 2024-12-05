@@ -41,8 +41,8 @@ From the [wsclean](https://wsclean.readthedocs.io/) docs:
 > One has of course the option to combine the output manually, e.g. with a
 > simple Python script.
 
-This is a simple Python script to combine (single-frequency or single-Stokes)
-FITS images manually.
+This is a simple Python script to combine (single-frequency) FITS images
+manually.
 
 Current assumptions:
 
