@@ -16,6 +16,7 @@ formatter = logging.Formatter(
 )
 
 
+# pylint: disable=W0621
 class TqdmToLogger(io.StringIO):
     """
     Output stream for TQDM which will output to logger module instead of
@@ -40,7 +41,6 @@ class TqdmToLogger(io.StringIO):
             self.logger.log(self.level, self.buf)
 
 
-# pylint: disable=W0621
 def set_verbosity(verbosity: int) -> None:
     """Set the logger verbosity.
 
