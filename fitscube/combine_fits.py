@@ -733,7 +733,6 @@ def cli() -> None:
     args = parser.parse_args()
 
     set_verbosity(
-        logger=logger,
         verbosity=args.verbosity,
     )
     overwrite = bool(args.overwrite)
