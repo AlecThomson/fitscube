@@ -10,6 +10,7 @@ logging.captureWarnings(True)
 # https://gist.github.com/gwerbin/e9ab7a88fef03771ab0bf3a11cf921bc
 
 
+# pylint: disable=W0621
 def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
     """Set the logger verbosity.
 
@@ -29,7 +30,6 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
     logger.setLevel(level)
 
 
-# pylint: disable=redefined-outer-name
 logger = logging.getLogger("cutout_fits")
 logger.setLevel(logging.WARNING)
 formatter = logging.Formatter(
