@@ -84,11 +84,9 @@ async def write_channel_to_cube_coro(
 
 
 def write_channel_to_cube(
-    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane: ArrayLike, chan: int, header: fits.Header
 ) -> None:
-    return asyncio.run(
-        write_channel_to_cube_coro(file_handle, plane_bytes, chan, header)
-    )
+    return asyncio.run(write_channel_to_cube_coro(file_handle, plane, chan, header))
 
 
 # Stolen from https://stackoverflow.com/a/61478547
