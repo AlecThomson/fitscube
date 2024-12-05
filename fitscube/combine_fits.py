@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from io import BufferedRandom
 from pathlib import Path
 from typing import Awaitable, NamedTuple, TypeVar, cast
@@ -27,7 +28,9 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
 
-from fitscube.logging import logger, set_verbosity
+from fitscube.logging import TqdmToLogger, logger, set_verbosity
+
+TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 T = TypeVar("T")
 
@@ -103,7 +106,7 @@ async def gather_with_limit(
         Awaitable: The result of the coroutines
     """
     if limit is None:
-        return cast(list[T], await tqdm.gather(*coros, desc=desc))
+        return cast(list[T], await tqdm.gather(*coros, desc=desc, file=TQDM_OUT))
 
     semaphore = asyncio.Semaphore(limit)
 
@@ -111,7 +114,10 @@ async def gather_with_limit(
         async with semaphore:
             return await coro
 
-    return cast(list[T], await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc))
+    return cast(
+        list[T],
+        await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc, file=TQDM_OUT),
+    )
 
 
 # https://stackoverflow.com/a/66082278
@@ -445,6 +451,7 @@ def parse_beams(
     for image in tqdm(
         file_list,
         desc="Extracting beams",
+        file=TQDM_OUT,
     ):
         header = fits.getheader(image)
         try:

@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+import io
 import logging
 
 logging.captureWarnings(True)
 
 # Following guide from gwerbin/multiprocessing_logging.py
 # https://gist.github.com/gwerbin/e9ab7a88fef03771ab0bf3a11cf921bc
+
+
+class TqdmToLogger(io.StringIO):
+    """
+    Output stream for TQDM which will output to logger module instead of
+    the StdOut.
+    """
+
+    logger = None
+    level = None
+    buf = ""
+
+    def __init__(self, logger: logging.Logger, level: int | None = None):
+        super().__init__()
+        self.logger = logger
+        self.level = level if level else logging.INFO
+
+    def write(self, buf: str) -> int:
+        self.buf = buf.strip("\r\n\t ")
+        return len(buf)
+
+    def flush(self) -> None:
+        if not self.logger:
+            return
+        if not self.level:
+            level = logging.INFO
+        self.logger.log(level, self.buf)
 
 
 # pylint: disable=W0621
@@ -30,8 +58,7 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
     logger.setLevel(level)
 
 
-logger = logging.getLogger("cutout_fits")
-logger.setLevel(logging.WARNING)
+logger = logging.getLogger("fitscube")
 formatter = logging.Formatter(
     fmt="[%(threadName)s] %(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -39,4 +66,5 @@ formatter = logging.Formatter(
 
 ch = logging.StreamHandler()
 ch.setFormatter(formatter)
+ch.setLevel(logging.WARNING)
 logger.addHandler(ch)
