@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 
 logging.captureWarnings(True)
@@ -9,9 +10,38 @@ logging.captureWarnings(True)
 # Following guide from gwerbin/multiprocessing_logging.py
 # https://gist.github.com/gwerbin/e9ab7a88fef03771ab0bf3a11cf921bc
 
+formatter = logging.Formatter(
+    fmt="[%(threadName)s] %(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 
 # pylint: disable=W0621
-def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
+class TqdmToLogger(io.StringIO):
+    """
+    Output stream for TQDM which will output to logger module instead of
+    the StdOut.
+    """
+
+    logger = None
+    level = None
+    buf = ""
+
+    def __init__(self, logger: logging.Logger | None, level: int | None = None) -> None:
+        super().__init__()
+        self.logger = logger
+        self.level = level or logging.INFO
+
+    def write(self, buf: str) -> int:
+        self.buf = buf.strip("\r\n\t ")
+        return len(buf)
+
+    def flush(self) -> None:
+        if self.logger is not None and isinstance(self.level, int):
+            self.logger.log(self.level, self.buf)
+
+
+def set_verbosity(verbosity: int) -> None:
     """Set the logger verbosity.
 
     Args:
@@ -27,16 +57,16 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
     else:
         level = logging.CRITICAL
 
-    logger.setLevel(level)
+    logging.getLogger().setLevel(level)
+    ch = logging.StreamHandler()
+    ch.setFormatter(formatter)
+    ch.setLevel(level)
+    logging.getLogger().addHandler(ch)
 
 
-logger = logging.getLogger("cutout_fits")
-logger.setLevel(logging.WARNING)
-formatter = logging.Formatter(
-    fmt="[%(threadName)s] %(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logger = logging.getLogger("fitscube")
 
 ch = logging.StreamHandler()
 ch.setFormatter(formatter)
+ch.setLevel(logging.WARNING)
 logger.addHandler(ch)
