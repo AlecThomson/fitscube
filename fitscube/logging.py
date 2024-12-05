@@ -50,3 +50,6 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
         level = logging.CRITICAL
 
     logger.setLevel(level)
+
+
+logger = setup_logger()

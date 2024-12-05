@@ -27,9 +27,7 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
 
-from fitscube.logging import set_verbosity, setup_logger
-
-logger = setup_logger()
+from fitscube.logging import logger, set_verbosity
 
 T = TypeVar("T")
 
@@ -76,13 +74,13 @@ class FileFrequencyInfo(NamedTuple):
 
 
 async def write_channel_to_cube_coro(
-    file_handle: BufferedRandom, plane_bytes: bytes, chan: int, header: fits.Header
+    file_handle: BufferedRandom, plane: ArrayLike, chan: int, header: fits.Header
 ) -> None:
     msg = f"Writing channel {chan} to cube"
     logger.info(msg)
-    seek_length = len(header.tostring()) + (len(plane_bytes) * chan)
+    seek_length = len(header.tostring()) + (plane.nbytes * chan)
     file_handle.seek(seek_length)
-    file_handle.write(plane_bytes)
+    plane.tofile(file_handle)
 
 
 def write_channel_to_cube(
@@ -575,14 +573,13 @@ async def process_channel(
     else:
         plane = await asyncio.to_thread(fits.getdata, file_list[old_channel])
 
-    plane_bytes = plane.tobytes()
     await write_channel_to_cube_coro(
         file_handle=file_handle,
-        plane_bytes=plane_bytes,
+        plane=plane,
         chan=new_channel,
         header=new_header,
     )
-    del plane, plane_bytes
+    del plane
 
 
 async def combine_fits_coro(
