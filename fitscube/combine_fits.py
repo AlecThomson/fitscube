@@ -207,9 +207,8 @@ async def create_cube_from_scratch_coro(
     header.tofile(output_file, overwrite=overwrite)
 
     bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
-    logger.info(
-        f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}"
-    )
+    msg = f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}"
+    logger.info(msg)
     if bytes_per_value is None:
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
@@ -638,7 +637,8 @@ async def combine_fits_coro(
     )
     has_beams = "BMAJ" in fits.getheader(file_list[0])
     if has_beams:
-        logger.info(f"Found beam in {file_list[0]} - assuming all files have beams")
+        msg = f"Found beam in {file_list[0]} - assuming all files have beams"
+        logger.info(msg)
         beams = parse_beams(file_list)
         single_beam = np.allclose(beams[0], beams)
         if single_beam:
@@ -697,7 +697,8 @@ async def combine_fits_coro(
     if has_beams and not single_beam:
         old_header = fits.getheader(file_list[0])
         beam_table_hdu = make_beam_table(beams, old_header)
-        logger.info(f"Appending beam table to {out_cube}")
+        msg = f"Appending beam table to {out_cube}"
+        logger.info(msg)
         fits.append(
             out_cube,
             data=beam_table_hdu.data,
