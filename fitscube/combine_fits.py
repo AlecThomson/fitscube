@@ -703,7 +703,6 @@ async def combine_fits_coro(
             out_cube,
             data=beam_table_hdu.data,
             header=beam_table_hdu.header,
-            verify=False,
         )
 
     return freqs
