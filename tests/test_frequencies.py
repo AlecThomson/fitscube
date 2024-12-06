@@ -68,7 +68,7 @@ def test_even_combine(file_list: list[Path], even_freqs: u.Quantity, output_file
 
     assert np.array_equal(freqs, even_freqs)
 
-    cube = fits.getdata(output_file)
+    cube = fits.getdata(output_file, verify="exception")
     for chan in range(len(freqs)):
         image = fits.getdata(file_list[chan])
         plane = cube[chan]
@@ -102,7 +102,7 @@ def test_uneven_combine(
         else:
             assert np.isclose(cube_spectrum[i], expected_spectrum[i])
     for chan in range(len(freqs)):
-        image = fits.getdata(file_list[chan])
+        image = fits.getdata(file_list[chan], verify="exception")
         plane = cube[chan]
         if np.isnan(plane).all():
             assert chan in (1, 2)
