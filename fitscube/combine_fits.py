@@ -207,6 +207,7 @@ async def create_cube_from_scratch_coro(
     header.tofile(output_file, overwrite=overwrite)
 
     bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
+    logger.info(f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}")
     if bytes_per_value is None:
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
@@ -216,8 +217,8 @@ async def create_cube_from_scratch_coro(
         # Data we want to write.
         # 8 is the number of bytes per value, i.e. abs(header['BITPIX'])/8
         # (this example is assuming a 64-bit float)
-        file_length = len(output_header.tostring()) + (
-            np.prod(output_shape) * np.abs(output_header["BITPIX"] // bytes_per_value)
+        file_length = len(header.tostring()) + (
+            np.prod(output_shape) * bytes_per_value
         )
         # FITS files must be a multiple of 2880 bytes long; the final -1
         # is to account for the final byte that we are about to write.
@@ -643,6 +644,7 @@ async def combine_fits_coro(
         if single_beam:
             logger.info("All beams are the same")
     else:
+        beams = None
         single_beam = False
 
     # Sort the files by frequency
@@ -693,10 +695,9 @@ async def combine_fits_coro(
 
     # Handle beams
     if has_beams and not single_beam:
-        logger.info("Extracting beam information")
-        beams = parse_beams(file_list)
         old_header = fits.getheader(file_list[0])
         beam_table_hdu = make_beam_table(beams, old_header)
+        logger.info(f"Appending beam table to {out_cube}")
         fits.append(
             out_cube,
             data=beam_table_hdu.data,
