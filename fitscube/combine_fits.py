@@ -207,7 +207,9 @@ async def create_cube_from_scratch_coro(
     header.tofile(output_file, overwrite=overwrite)
 
     bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
-    logger.info(f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}")
+    logger.info(
+        f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}"
+    )
     if bytes_per_value is None:
         msg = f"BITPIX value {output_header['BITPIX']} not recognized"
         raise ValueError(msg)
@@ -217,9 +219,7 @@ async def create_cube_from_scratch_coro(
         # Data we want to write.
         # 8 is the number of bytes per value, i.e. abs(header['BITPIX'])/8
         # (this example is assuming a 64-bit float)
-        file_length = len(header.tostring()) + (
-            np.prod(output_shape) * bytes_per_value
-        )
+        file_length = len(header.tostring()) + (np.prod(output_shape) * bytes_per_value)
         # FITS files must be a multiple of 2880 bytes long; the final -1
         # is to account for the final byte that we are about to write.
         file_length = ((file_length + 2880 - 1) // 2880) * 2880 - 1
