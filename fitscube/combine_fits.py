@@ -242,11 +242,18 @@ def create_output_cube(
     freqs: u.Quantity,
     ignore_freq: bool = False,
     has_beams: bool = False,
+    single_beam: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
     return asyncio.run(
         create_output_cube_coro(
-            old_name, out_cube, freqs, ignore_freq, has_beams, overwrite
+            old_name=old_name,
+            out_cube=out_cube,
+            freqs=freqs,
+            ignore_freq=ignore_freq,
+            has_beams=has_beams,
+            single_beam=single_beam,
+            overwrite=overwrite,
         )
     )
 
@@ -257,6 +264,7 @@ async def create_output_cube_coro(
     freqs: u.Quantity,
     ignore_freq: bool = False,
     has_beams: bool = False,
+    single_beam: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
     """Initialize the data cube.
@@ -309,7 +317,7 @@ async def create_output_cube_coro(
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
 
-    if has_beams:
+    if has_beams and not single_beam:
         tiny = np.finfo(np.float32).tiny
         new_header["CASAMBM"] = True
         new_header["COMMENT"] = "The PSF in each image plane varies."
@@ -630,6 +638,12 @@ async def combine_fits_coro(
     has_beams = "BMAJ" in fits.getheader(file_list[0])
     if has_beams:
         logger.info(f"Found beam in {file_list[0]} - assuming all files have beams")
+        beams = parse_beams(file_list)
+        single_beam = np.allclose(beams[0], beams)
+        if single_beam:
+            logger.info("All beams are the same")
+    else:
+        single_beam = False
 
     # Sort the files by frequency
     old_sort_idx = np.argsort(file_freqs)
@@ -645,6 +659,7 @@ async def combine_fits_coro(
         freqs=freqs,
         ignore_freq=ignore_freq,
         has_beams=has_beams,
+        single_beam=single_beam,
         overwrite=overwrite,
     )
 
@@ -677,7 +692,7 @@ async def combine_fits_coro(
         await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
-    if has_beams:
+    if has_beams and not single_beam:
         logger.info("Extracting beam information")
         beams = parse_beams(file_list)
         old_header = fits.getheader(file_list[0])
