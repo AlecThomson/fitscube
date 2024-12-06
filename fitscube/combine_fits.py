@@ -241,10 +241,13 @@ def create_output_cube(
     out_cube: Path,
     freqs: u.Quantity,
     ignore_freq: bool = False,
+    has_beams: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
     return asyncio.run(
-        create_output_cube_coro(old_name, out_cube, freqs, ignore_freq, overwrite)
+        create_output_cube_coro(
+            old_name, out_cube, freqs, ignore_freq, has_beams, overwrite
+        )
     )
 
 
@@ -253,6 +256,7 @@ async def create_output_cube_coro(
     out_cube: Path,
     freqs: u.Quantity,
     ignore_freq: bool = False,
+    has_beams: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
     """Initialize the data cube.
@@ -304,6 +308,18 @@ async def create_output_cube_coro(
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
+
+    if has_beams:
+        tiny = np.finfo(np.float32).tiny
+        new_header["CASAMBM"] = True
+        new_header["COMMENT"] = "The PSF in each image plane varies."
+        new_header["COMMENT"] = (
+            "Full beam information is stored in the second FITS extension."
+        )
+        new_header["COMMENT"] = (
+            f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
+        )
+        del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -493,25 +509,19 @@ def get_polarisation(header: fits.Header) -> int:
     return 0
 
 
-def make_beam_table(
-    beams: Beams, header: fits.Header
-) -> tuple[fits.BinTableHDU, fits.Header]:
+def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     """Make a beam table.
 
     Args:
         beams (Beams): Beams object
-        header (fits.Header): Primary header
+        header (fits.Header): Old header to infer polarisation
 
     Returns:
-        tuple[fits.BinTableHDU, fits.Header]: Beam table and updated header
+        fits.BinTableHDU: Beam table
     """
-    header["CASAMBM"] = True
-    header["COMMENT"] = "The PSF in each image plane varies."
-    header["COMMENT"] = "Full beam information is stored in the second FITS extension."
-    del header["BMAJ"], header["BMIN"], header["BPA"]
     nchan = len(beams.major)
     chans = np.arange(nchan)
-    pol = get_polarisation(header)
+    pol = get_polarisation(old_header)
     pols = np.ones(nchan, dtype=int) * pol
     tiny = np.finfo(np.float32).tiny
     beam_table = Table(
@@ -528,14 +538,13 @@ def make_beam_table(
         names=["BMAJ", "BMIN", "BPA", "CHAN", "POL"],
         dtype=["f4", "f4", "f4", "i4", "i4"],
     )
-    header["COMMENT"] = f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
     tab_hdu = fits.table_to_hdu(beam_table)
     tab_header = tab_hdu.header
     tab_header["EXTNAME"] = "BEAMS"
     tab_header["NCHAN"] = nchan
     tab_header["NPOL"] = 1  # Only one pol for now
 
-    return tab_hdu, header
+    return tab_hdu
 
 
 def combine_fits(
@@ -618,6 +627,9 @@ async def combine_fits_coro(
         file_list=file_list,
         create_blanks=create_blanks,
     )
+    has_beams = "BMAJ" in fits.getheader(file_list[0])
+    if has_beams:
+        logger.info(f"Found beam in {file_list[0]} - assuming all files have beams")
 
     # Sort the files by frequency
     old_sort_idx = np.argsort(file_freqs)
@@ -632,6 +644,7 @@ async def combine_fits_coro(
         out_cube=out_cube,
         freqs=freqs,
         ignore_freq=ignore_freq,
+        has_beams=has_beams,
         overwrite=overwrite,
     )
 
@@ -664,18 +677,17 @@ async def combine_fits_coro(
         await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
-    if "BMAJ" in fits.getheader(file_list[0]):
+    if has_beams:
         logger.info("Extracting beam information")
         beams = parse_beams(file_list)
-        with fits.open(out_cube, memmap=True, mode="denywrite") as hdu_list:
-            hdu = hdu_list[0]
-            data = hdu.data
-            header = hdu.header
-        primary_hdu = fits.PrimaryHDU(data=data, header=header)
-        logger.info("Adding beam table to primary header")
-        beam_table_hdu, new_header = make_beam_table(beams, new_header)
-        new_hdu_list = fits.HDUList([primary_hdu, beam_table_hdu])
-        new_hdu_list.writeto(out_cube, overwrite=True)
+        old_header = fits.getheader(file_list[0])
+        beam_table_hdu = make_beam_table(beams, old_header)
+        fits.append(
+            out_cube,
+            data=beam_table_hdu.data,
+            header=beam_table_hdu.header,
+            verify=False,
+        )
 
     return freqs
 
