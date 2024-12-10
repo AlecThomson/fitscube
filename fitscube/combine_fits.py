@@ -65,7 +65,7 @@ class AsyncRunner(Protocol):
 if USE_UVLOOP:
     async_runner: AsyncRunner = uvloop.run
 else:
-    async_runner: AsyncRunner = asyncio.run
+    async_runner: AsyncRunner = asyncio.run  # type: ignore[no-redef]
 
 
 class InitResult(NamedTuple):
