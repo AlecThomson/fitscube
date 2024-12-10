@@ -59,6 +59,8 @@ BIT_DICT = {
 
 
 class AsyncRunner(Protocol):
+    """Protocol for async runner."""
+
     def __call__(self, main: Coroutine[Any, Any, T]) -> T: ...
 
 
