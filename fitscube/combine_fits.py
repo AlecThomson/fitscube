@@ -16,7 +16,15 @@ import asyncio
 import logging
 from io import BufferedRandom
 from pathlib import Path
-from typing import Awaitable, NamedTuple, TypeVar, cast
+from typing import (
+    Any,
+    Awaitable,
+    Coroutine,
+    NamedTuple,
+    Protocol,
+    TypeVar,
+    cast,
+)
 
 import astropy.units as u
 import numpy as np
@@ -27,6 +35,13 @@ from numpy.typing import ArrayLike
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
+
+try:
+    import uvloop
+
+    USE_UVLOOP = True
+except ImportError:
+    USE_UVLOOP = False
 
 from fitscube.logging import TqdmToLogger, logger, set_verbosity
 
@@ -41,6 +56,18 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
+
+
+class AsyncRunner(Protocol):
+    """Protocol for async runner."""
+
+    def __call__(self, main: Coroutine[Any, Any, T]) -> T: ...
+
+
+if USE_UVLOOP:
+    async_runner: AsyncRunner = uvloop.run
+else:
+    async_runner: AsyncRunner = asyncio.run  # type: ignore[no-redef]
 
 
 class InitResult(NamedTuple):
@@ -89,7 +116,7 @@ async def write_channel_to_cube_coro(
 def write_channel_to_cube(
     file_handle: BufferedRandom, plane: ArrayLike, chan: int, header: fits.Header
 ) -> None:
-    return asyncio.run(write_channel_to_cube_coro(file_handle, plane, chan, header))
+    return async_runner(write_channel_to_cube_coro(file_handle, plane, chan, header))
 
 
 # Stolen from https://stackoverflow.com/a/61478547
@@ -245,7 +272,7 @@ def create_output_cube(
     single_beam: bool = False,
     overwrite: bool = False,
 ) -> InitResult:
-    return asyncio.run(
+    return async_runner(
         create_output_cube_coro(
             old_name=old_name,
             out_cube=out_cube,
@@ -345,7 +372,7 @@ async def create_output_cube_coro(
 
 
 def read_freq_from_header(image_path: Path) -> u.Quantity:
-    return asyncio.run(read_freq_from_header_coro(image_path))
+    return async_runner(read_freq_from_header_coro(image_path))
 
 
 async def read_freq_from_header_coro(
@@ -382,7 +409,7 @@ def parse_freqs(
     ignore_freq: bool = False,
     create_blanks: bool = False,
 ) -> FileFrequencyInfo:
-    return asyncio.run(
+    return async_runner(
         parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks)
     )
 
@@ -565,7 +592,7 @@ def combine_fits(
     overwrite: bool = False,
     max_workers: int | None = None,
 ) -> u.Quantity:
-    return asyncio.run(
+    return async_runner(
         combine_fits_coro(
             file_list=file_list,
             out_cube=out_cube,
