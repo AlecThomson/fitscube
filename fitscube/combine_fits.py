@@ -16,7 +16,15 @@ import asyncio
 import logging
 from io import BufferedRandom
 from pathlib import Path
-from typing import Awaitable, NamedTuple, TypeVar, cast
+from typing import (
+    Any,
+    Awaitable,
+    Coroutine,
+    NamedTuple,
+    Protocol,
+    TypeVar,
+    cast,
+)
 
 import astropy.units as u
 import numpy as np
@@ -31,9 +39,9 @@ from tqdm.asyncio import tqdm
 try:
     import uvloop
 
-    async_runner = uvloop.run
+    USE_UVLOOP = True
 except ImportError:
-    async_runner = asyncio.run
+    USE_UVLOOP = False
 
 from fitscube.logging import TqdmToLogger, logger, set_verbosity
 
@@ -48,6 +56,16 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
+
+
+class AsyncRunner(Protocol):
+    def __call__(self, main: Coroutine[Any, Any, T]) -> T: ...
+
+
+if USE_UVLOOP:
+    async_runner: AsyncRunner = uvloop.run
+else:
+    async_runner: AsyncRunner = asyncio.run
 
 
 class InitResult(NamedTuple):
