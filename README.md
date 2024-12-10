@@ -65,6 +65,13 @@ Or, onstall from this git repo (latest):
 pip install git+https://github.com/AlecThomson/fitscube.git
 ```
 
+To install and use the (uvloop)[https://github.com/MagicStack/uvloop] Async
+runner do:
+
+```
+pip install fitscube[uvloop]
+```
+
 ## Usage
 
 Command line:
