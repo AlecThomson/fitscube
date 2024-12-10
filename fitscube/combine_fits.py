@@ -305,7 +305,7 @@ async def create_output_cube_coro(
     Returns:
         InitResult: header, freq_idx, freq_fits_idx, is_2d
     """
-    old_data, old_header = fits.getdata(old_name, header=True)
+    old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
     even_freq = np.diff(freqs).std() < (1e-4 * u.Hz)
     if not even_freq:
         logger.warning("Frequencies are not evenly spaced")
@@ -614,11 +614,14 @@ async def process_channel(
 ) -> None:
     msg = f"Processing channel {new_channel}"
     logger.info(msg)
+    # Use memmap=False to force the data to be read into memory - gives a speedup
     if is_missing:
-        plane = await asyncio.to_thread(fits.getdata, file_list[0])
+        plane = await asyncio.to_thread(fits.getdata, file_list[0], memamp=False)
         plane *= np.nan
     else:
-        plane = await asyncio.to_thread(fits.getdata, file_list[old_channel])
+        plane = await asyncio.to_thread(
+            fits.getdata, file_list[old_channel], memmap=False
+        )
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
