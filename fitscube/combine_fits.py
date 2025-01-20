@@ -13,17 +13,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from io import BufferedRandom
 from pathlib import Path
 from typing import (
-    Any,
-    Awaitable,
-    Coroutine,
     NamedTuple,
-    Protocol,
     TypeVar,
-    cast,
 )
 
 import astropy.units as u
@@ -36,16 +30,8 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
 
-try:
-    import uvloop
-
-    USE_UVLOOP = True
-except ImportError:
-    USE_UVLOOP = False
-
-from fitscube.logging import TqdmToLogger, logger, set_verbosity
-
-TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
+from fitscube.asyncio import TQDM_OUT, gather_with_limit, sync_wrapper
+from fitscube.logging import logger, set_verbosity
 
 T = TypeVar("T")
 
@@ -56,18 +42,6 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
-
-
-class AsyncRunner(Protocol):
-    """Protocol for async runner."""
-
-    def __call__(self, main: Coroutine[Any, Any, T]) -> T: ...
-
-
-if USE_UVLOOP:
-    async_runner: AsyncRunner = uvloop.run
-else:
-    async_runner: AsyncRunner = asyncio.run  # type: ignore[no-redef]
 
 
 class InitResult(NamedTuple):
@@ -113,38 +87,7 @@ async def write_channel_to_cube_coro(
     plane.tofile(file_handle)
 
 
-def write_channel_to_cube(
-    file_handle: BufferedRandom, plane: ArrayLike, chan: int, header: fits.Header
-) -> None:
-    return async_runner(write_channel_to_cube_coro(file_handle, plane, chan, header))
-
-
-# Stolen from https://stackoverflow.com/a/61478547
-async def gather_with_limit(
-    limit: int | None, *coros: Awaitable[T], desc: str | None = None
-) -> list[T]:
-    """Gather with a limit on the number of coroutines running at once.
-
-    Args:
-        limit (int): The number of coroutines to run at once
-        coros (Awaitable): The coroutines to run
-
-    Returns:
-        Awaitable: The result of the coroutines
-    """
-    if limit is None:
-        return cast(list[T], await tqdm.gather(*coros, desc=desc, file=TQDM_OUT))
-
-    semaphore = asyncio.Semaphore(limit)
-
-    async def sem_coro(coro: Awaitable[T]) -> T:
-        async with semaphore:
-            return await coro
-
-    return cast(
-        list[T],
-        await tqdm.gather(*(sem_coro(c) for c in coros), desc=desc, file=TQDM_OUT),
-    )
+write_channel_to_cube = sync_wrapper(write_channel_to_cube_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -263,28 +206,6 @@ async def create_cube_from_scratch_coro(
     return fits.getheader(output_file)
 
 
-def create_output_cube(
-    old_name: Path,
-    out_cube: Path,
-    freqs: u.Quantity,
-    ignore_freq: bool = False,
-    has_beams: bool = False,
-    single_beam: bool = False,
-    overwrite: bool = False,
-) -> InitResult:
-    return async_runner(
-        create_output_cube_coro(
-            old_name=old_name,
-            out_cube=out_cube,
-            freqs=freqs,
-            ignore_freq=ignore_freq,
-            has_beams=has_beams,
-            single_beam=single_beam,
-            overwrite=overwrite,
-        )
-    )
-
-
 async def create_output_cube_coro(
     old_name: Path,
     out_cube: Path,
@@ -371,8 +292,7 @@ async def create_output_cube_coro(
     )
 
 
-def read_freq_from_header(image_path: Path) -> u.Quantity:
-    return async_runner(read_freq_from_header_coro(image_path))
+create_output_cube = sync_wrapper(create_output_cube_coro)
 
 
 async def read_freq_from_header_coro(
@@ -402,16 +322,7 @@ async def read_freq_from_header_coro(
         raise ValueError(msg) from e
 
 
-def parse_freqs(
-    file_list: list[Path],
-    freq_file: Path | None = None,
-    freq_list: list[float] | None = None,
-    ignore_freq: bool = False,
-    create_blanks: bool = False,
-) -> FileFrequencyInfo:
-    return async_runner(
-        parse_freqs_coro(file_list, freq_file, freq_list, ignore_freq, create_blanks)
-    )
+read_freq_from_header = sync_wrapper(read_freq_from_header_coro)
 
 
 async def parse_freqs_coro(
@@ -485,6 +396,9 @@ async def parse_freqs_coro(
         freqs=freqs,
         missing_chan_idx=missing_chan_idx,
     )
+
+
+parse_freqs = sync_wrapper(parse_freqs_coro)
 
 
 def parse_beams(
@@ -580,30 +494,6 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     tab_header["NPOL"] = 1  # Only one pol for now
 
     return tab_hdu
-
-
-def combine_fits(
-    file_list: list[Path],
-    out_cube: Path,
-    freq_file: Path | None = None,
-    freq_list: list[float] | None = None,
-    ignore_freq: bool = False,
-    create_blanks: bool = False,
-    overwrite: bool = False,
-    max_workers: int | None = None,
-) -> u.Quantity:
-    return async_runner(
-        combine_fits_coro(
-            file_list=file_list,
-            out_cube=out_cube,
-            freq_file=freq_file,
-            freq_list=freq_list,
-            ignore_freq=ignore_freq,
-            create_blanks=create_blanks,
-            overwrite=overwrite,
-            max_workers=max_workers,
-        )
-    )
 
 
 async def process_channel(
@@ -736,6 +626,9 @@ async def combine_fits_coro(
         )
 
     return freqs
+
+
+combine_fits = sync_wrapper(combine_fits_coro)
 
 
 def cli() -> None:
