@@ -30,10 +30,9 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
   "astropy",
-  "numpy",
+  "numpy>=2",
   "tqdm",
   "radio_beam",
-  "typing-extensions; python_version < '3.10'",
 ]
 
 [project.optional-dependencies]
