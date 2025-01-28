@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from functools import wraps
 from typing import (
     Any,
     Awaitable,
     Callable,
     Coroutine,
-    ParamSpec,
     Protocol,
     TypeVar,
     cast,
@@ -18,6 +18,11 @@ from typing import (
 from tqdm.asyncio import tqdm
 
 from fitscube.logging import TQDM_OUT
+
+if sys.version_info < (3, 10):
+    from typing_extensions import ParamSpec
+else:
+    from typing import ParamSpec
 
 try:
     import uvloop

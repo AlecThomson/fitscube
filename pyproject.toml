@@ -35,6 +35,7 @@ dependencies = [
   "numpy>=2",
   "tqdm",
   "radio_beam",
+  "typing-extensions; python_version < '3.10'",
 ]
 
 [project.optional-dependencies]
@@ -100,7 +101,7 @@ report.exclude_also = [
 
 [tool.mypy]
 files = ["fitscube", "tests"]
-python_version = "3.9"
+python_version = "3.10"
 warn_unused_configs = true
 strict = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]

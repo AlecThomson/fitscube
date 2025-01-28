@@ -30,8 +30,8 @@ from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
 
-from fitscube.asyncio import TQDM_OUT, gather_with_limit, sync_wrapper
-from fitscube.logging import logger, set_verbosity
+from fitscube.asyncio import gather_with_limit, sync_wrapper
+from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
 T = TypeVar("T")
 
