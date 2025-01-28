@@ -32,7 +32,7 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
   "astropy",
-  "numpy",
+  "numpy>=2",
   "tqdm",
   "radio_beam",
 ]
