@@ -720,8 +720,8 @@ def cli() -> None:
     # Add options for specifying frequencies
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--freq-file",
-        help="File containing frequencies in Hz",
+        "--spec-file",
+        help="File containing frequencies in Hz or times in MJD s (if --time-domain == True)",
         type=Path,
         default=None,
     )
