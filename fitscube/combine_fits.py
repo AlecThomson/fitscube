@@ -319,7 +319,7 @@ async def create_output_cube_coro(
 create_output_cube = sync_wrapper(create_output_cube_coro)
 
 
-def UTC_to_MJDsec(utc_time: str) -> float:
+def utc_to_mjdsec(utc_time: str) -> float:
     """
     convert UTC time (in isot format as found in fits header)
     to MJD seconds to shunt into a freq
@@ -346,7 +346,7 @@ async def read_spec_from_header_coro(
         try:
             spec = await asyncio.to_thread(header.get, QUANTITY)
             if time_domain_mode:
-                spec = UTC_to_MJDsec(spec)
+                spec = utc_to_mjdsec(spec)
             return spec * unit
         except KeyError as e:
             msg = "REFFREQ or DATE-OBS not in header. Cannot combine 2D images without spequency information."
@@ -357,7 +357,7 @@ async def read_spec_from_header_coro(
         wcs = WCS(header)
         if time_domain_mode:
             spec = await asyncio.to_thread(header.get, QUANTITY)
-            spec = UTC_to_MJDsec(spec)
+            spec = utc_to_mjdsec(spec)
             return spec * unit
 
         return wcs.spectral.pixel_to_world(0).to(u.Hz)
