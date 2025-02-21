@@ -59,7 +59,7 @@ Install from PyPI (stable):
 pip install fitscube
 ```
 
-Or, onstall from this git repo (latest):
+Or, install from this git repo (latest):
 
 ```bash
 pip install git+https://github.com/AlecThomson/fitscube.git
@@ -91,14 +91,15 @@ options:
   -h, --help            show this help message and exit
   -o, --overwrite       Overwrite output file if it exists
   --create-blanks       Try to create a blank cube with evenly spaced frequencies
-  --freq-file FREQ_FILE
-                        File containing frequencies in Hz
-  --freqs FREQS [FREQS ...]
-                        List of frequencies in Hz
-  --ignore-freq         Ignore frequency information and just stack (probably not what you want)
+  --spec-file SPEC_FILE
+                        File containing frequencies in Hz or times in MJD s (if --time-domain == True)
+  --specs SPECS [SPECS ...]
+                        List of spequencies in Hz or MJD s
+  --ignore-spec         Ignore frequency or time information and just stack (probably not what you want)
   -v, --verbosity       Increase output verbosity
   --max-workers MAX_WORKERS
                         Maximum number of workers to use for concurrent processing
+  --time-domain         Flag for constructing a time-domain cube
 ```
 
 Python:
