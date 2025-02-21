@@ -4,10 +4,9 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid
-- Frequency is either a WCS axis or in the REFFREQ header keyword
 - All the relevant information is in the first header of the first image
-
-Note: spequency = generic term for time or frequency
+- Frequency is either a WCS axis or in the REFFREQ header keyword OR
+- Time is present in the DATE-OBS header keyword for time-domain-mode
 """
 
 from __future__ import annotations
@@ -52,18 +51,19 @@ class InitResult(NamedTuple):
     header: fits.Header
     """Output header"""
     spec_idx: int
-    """Index of spequency axis"""
+    """Index of Frequency/Time axis"""
     spec_fits_idx: int
-    """FITS index of spequency axis"""
+    """FITS index of Frequency/Time axis"""
     is_2d: bool
     """Whether the input is 2D"""
 
 
+# Note: spequency = generic term for time or frequency
 class SpequencyInfo(NamedTuple):
     """Frequency/time information."""
 
     specs: u.Quantity
-    """Spequencies"""
+    """Frequencies/Times"""
     missing_chan_idx: ArrayLike
     """Missing channel indices"""
 
@@ -74,7 +74,7 @@ class FileSpequencyInfo(NamedTuple):
     file_specs: u.Quantity
     """Frequencies or times matching each file"""
     specs: u.Quantity
-    """Spequencies"""
+    """Frequency/time in Hz or s"""
     missing_chan_idx: ArrayLike
     """Missing channel/time indices"""
 
@@ -124,10 +124,10 @@ def isin_close(
 
 
 def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
-    """Make the spequencies evenly spaced.
+    """Make the frequencies or times evenly spaced.
 
     Args:
-        specs (u.Quantity): Original specuencies
+        specs (u.Quantity): Original frequencies/times
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
@@ -250,7 +250,8 @@ async def create_output_cube_coro(
     old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
     even_spec = np.diff(specs).std() < (1e-4 * unit)
     if not even_spec:
-        logger.warning("Spequencies are not evenly spaced")
+        spequency = "Times" if time_domain_mode else "Frequencies"
+        logger.warning(f"{spequency} are not evenly spaced")
 
     n_chan = len(specs)
 
@@ -338,6 +339,7 @@ async def read_spec_from_header_coro(
     array_shape = wcs.array_shape
     unit = u.s if time_domain_mode else u.Hz
     QUANTITY = "DATE-OBS" if time_domain_mode else "REFFREQ"
+    spequency = "Time" if time_domain_mode else "Frequency"
     if array_shape is None:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
@@ -349,7 +351,7 @@ async def read_spec_from_header_coro(
                 spec = utc_to_mjdsec(spec)
             return spec * unit
         except KeyError as e:
-            msg = "REFFREQ or DATE-OBS not in header. Cannot combine 2D images without spequency information."
+            msg = f"{QUANTITY} not in header. Cannot combine 2D images without {spequency} information."
             raise KeyError(msg) from e
     try:
         if "SPECSYS" not in header:
@@ -362,6 +364,7 @@ async def read_spec_from_header_coro(
 
         return wcs.spectral.pixel_to_world(0).to(u.Hz)
     except Exception as e:
+        # there should probably be better handling of other errors for time domain mode
         msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
         raise ValueError(msg) from e
 
@@ -377,23 +380,25 @@ async def parse_specs_coro(
     create_blanks: bool = False,
     time_domain_mode: bool = False,
 ) -> FileSpequencyInfo:
-    """Parse the frequency information.
+    """Parse the frequency/time information.
 
     Args:
         file_list (list[str]): List of FITS files
-        spec_file (str | None, optional): File containing spequnecies. Defaults to None.
-        spec_list (list[float] | None, optional): List of spequencies. Defaults to None.
-        ignore_spec (bool | None, optional): Ignore spequency information. Defaults to False.
+        spec_file (str | None, optional): File containing frequencies/times. Defaults to None.
+        spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
+        ignore_spec (bool | None, optional): Ignore frequency/time information. Defaults to False.
 
     Raises:
         ValueError: If both spec_file and spec_list are specified
         KeyError: If 2D and (REFFREQ or DATE-OBS)  is not in header
-         ValueError: If not 2D and FREQ is not in header
+        ValueError: If not 2D and FREQ is not in header
 
     Returns:
         FileSpequencyInfo: file_specs, specs, missing_chan_idx
     """
     unit = u.s if time_domain_mode else u.Hz
+    spequency = "time" if time_domain_mode else "frequency"
+    spequencies = "times" if time_domain_mode else "frequencies"
     if ignore_spec:
         logger.info("Ignoring frequency information")
         return FileSpequencyInfo(
@@ -407,15 +412,15 @@ async def parse_specs_coro(
         raise ValueError(msg)
 
     if spec_file is not None:
-        logger.info("Reading spequencies from %s", spec_file)
+        logger.info("Reading  from %s", spec_file)
         file_specs = np.loadtxt(spec_file) * unit
         assert (
             len(file_specs) == len(file_list)
-        ), f"Number of spequencies in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
+        ), f"Number of {spequencies} in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
 
     else:
-        logger.info("Reading specuencies from FITS files")
+        logger.info(f"Reading {spequency} from FITS files")
         first_header = fits.getheader(file_list[0])
         if "SPECSYS" not in first_header:
             logger.warning("SPECSYS not in header(s). Will set to TOPOCENT")
@@ -429,7 +434,7 @@ async def parse_specs_coro(
             coros.append(coro)
 
         list_of_specs = await gather_with_limit(
-            None, *coros, desc="Extracting spequencies"
+            None, *coros, desc=f"Extracting {spequencies}"
         )
 
         file_specs = np.array([f.to(unit).value for f in list_of_specs]) * unit
@@ -437,7 +442,7 @@ async def parse_specs_coro(
         specs = file_specs.copy()
 
     if create_blanks:
-        logger.info("Trying to create a blank cube with evenly spaced spequencies")
+        logger.info(f"Trying to create a blank cube with evenly spaced {spequencies}")
         specs, missing_chan_idx = even_spacing(
             file_specs, time_domain_mode=time_domain_mode
         )
@@ -587,14 +592,13 @@ async def combine_fits_coro(
     time_domain_mode: bool = False,
 ) -> u.Quantity:
     """Combine FITS files into a cube.
-    Can handle either frequency or time dimensions generically
-    we term the generic dimension spequency and refer to it as spec
+    Can handle either frequency or time dimensions agnostically
 
     Args:
-        spec_file (Path | None, optional): Spequency file. Defaults to None.
-        spec_list (list[float] | None, optional): List of spequencies. Defaults to None.
-        ignore_spec (bool, optional): Ignore spequency information. Defaults to False.
-         create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
+        spec_file (Path | None, optional): Frequency/time file. Defaults to None.
+        spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
+        ignore_spec (bool, optional): Ignore frequency/time information. Defaults to False.
+        create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
 
     Returns:
@@ -728,7 +732,7 @@ def cli() -> None:
     group.add_argument(
         "--specs",
         nargs="+",
-        help="List of spequencies in Hz or s",
+        help="List of frequencies or times in Hz or MJD s respectively",
         type=float,
         default=None,
     )
@@ -781,9 +785,10 @@ def cli() -> None:
         time_domain_mode=time_domain_mode,
     )
 
+    spequency = "times" if time_domain_mode else "frequencies"
     logger.info("Written cube to %s", out_cube)
     np.savetxt(specs_file, specs.to(output_unit).value)
-    logger.info("Written spequencies to %s", specs_file)
+    logger.info(f"Written {spequency} to %s", specs_file)
 
 
 if __name__ == "__main__":
