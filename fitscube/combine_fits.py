@@ -170,9 +170,9 @@ async def create_cube_from_scratch_coro(
             hdu = hdu_list[0]
             data = hdu.data
             on_disk_shape = data.shape
-            assert (
-                data.shape == output_shape
-            ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
+            assert data.shape == output_shape, (
+                f"Output shape {on_disk_shape} does not match header {output_shape}!"
+            )
         return fits.getheader(output_file)
 
     logger.info("Output cube is too large to create in memory. Creating a blank file.")
@@ -212,9 +212,9 @@ async def create_cube_from_scratch_coro(
         hdu = hdu_list[0]
         data = hdu.data
         on_disk_shape = data.shape
-        assert (
-            on_disk_shape == output_shape
-        ), f"Output shape {on_disk_shape} does not match header {output_shape}!"
+        assert on_disk_shape == output_shape, (
+            f"Output shape {on_disk_shape} does not match header {output_shape}!"
+        )
 
     return fits.getheader(output_file)
 
@@ -245,13 +245,14 @@ async def create_output_cube_coro(
 
     # define units if in time or freq domain
     unit = u.s if time_domain_mode else u.Hz
-    CTYPE = "TIME" if time_domain_mode else "FREQ"
+    ctype = "TIME" if time_domain_mode else "FREQ"
 
     old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
     even_spec = np.diff(specs).std() < (1e-4 * unit)
     if not even_spec:
         spequency = "Times" if time_domain_mode else "Frequencies"
-        logger.warning(f"{spequency} are not evenly spaced")
+        msg = f"{spequency} are not evenly spaced"
+        logger.warning(msg)
 
     n_chan = len(specs)
 
@@ -263,14 +264,14 @@ async def create_output_cube_coro(
         wcs = WCS(old_header)
         # Look for the frequency axis in wcs
         try:
-            idx = wcs.axis_type_names[::-1].index(CTYPE)
+            idx = wcs.axis_type_names[::-1].index(ctype)
 
         except ValueError as e:
-            msg = f"No {CTYPE} axis found in WCS."
+            msg = f"No {ctype} axis found in WCS."
 
             raise ValueError(msg) from e
-        fits_idx = wcs.axis_type_names.index(CTYPE) + 1
-        logger.info(f"{CTYPE} axis found at index %s (NAXIS%s)", idx, fits_idx)
+        fits_idx = wcs.axis_type_names.index(ctype) + 1
+        logger.info(f"{ctype} axis found at index %s (NAXIS%s)", idx, fits_idx)
 
     new_header = old_header.copy()
     new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
@@ -279,7 +280,7 @@ async def create_output_cube_coro(
     new_header[f"CRVAL{fits_idx}"] = specs[0].value
     new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
-    new_header[f"CTYPE{fits_idx}"] = CTYPE
+    new_header[f"CTYPE{fits_idx}"] = ctype
 
     if ignore_spec or not even_spec:
         new_header[f"CDELT{fits_idx}"] = 1
@@ -338,7 +339,7 @@ async def read_spec_from_header_coro(
     wcs = WCS(header)
     array_shape = wcs.array_shape
     unit = u.s if time_domain_mode else u.Hz
-    QUANTITY = "DATE-OBS" if time_domain_mode else "REFFREQ"
+    quantity = "DATE-OBS" if time_domain_mode else "REFFREQ"
     spequency = "Time" if time_domain_mode else "Frequency"
     if array_shape is None:
         msg = "WCS does not have an array shape"
@@ -346,19 +347,19 @@ async def read_spec_from_header_coro(
     is_2d = len(array_shape) == 2
     if is_2d:
         try:
-            spec = await asyncio.to_thread(header.get, QUANTITY)
+            spec = await asyncio.to_thread(header.get, quantity)
             if time_domain_mode:
                 spec = utc_to_mjdsec(spec)
             return spec * unit
         except KeyError as e:
-            msg = f"{QUANTITY} not in header. Cannot combine 2D images without {spequency} information."
+            msg = f"{quantity} not in header. Cannot combine 2D images without {spequency} information."
             raise KeyError(msg) from e
     try:
         if "SPECSYS" not in header:
             header["SPECSYS"] = "TOPOCENT"
         wcs = WCS(header)
         if time_domain_mode:
-            spec = await asyncio.to_thread(header.get, QUANTITY)
+            spec = await asyncio.to_thread(header.get, quantity)
             spec = utc_to_mjdsec(spec)
             return spec * unit
 
@@ -397,7 +398,6 @@ async def parse_specs_coro(
         FileSpequencyInfo: file_specs, specs, missing_chan_idx
     """
     unit = u.s if time_domain_mode else u.Hz
-    spequency = "time" if time_domain_mode else "frequency"
     spequencies = "times" if time_domain_mode else "frequencies"
     if ignore_spec:
         logger.info("Ignoring frequency information")
@@ -412,15 +412,17 @@ async def parse_specs_coro(
         raise ValueError(msg)
 
     if spec_file is not None:
-        logger.info("Reading  from %s", spec_file)
+        msg = f"Reading from {spec_file}"
+        logger.info(msg)
         file_specs = np.loadtxt(spec_file) * unit
-        assert (
-            len(file_specs) == len(file_list)
-        ), f"Number of {spequencies} in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
+        assert len(file_specs) == len(file_list), (
+            f"Number of {spequencies} in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
+        )
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
 
     else:
-        logger.info(f"Reading {spequency} from FITS files")
+        msg = f"Reading {spequencies} from list"
+        logger.info(msg)
         first_header = fits.getheader(file_list[0])
         if "SPECSYS" not in first_header:
             logger.warning("SPECSYS not in header(s). Will set to TOPOCENT")
@@ -442,7 +444,8 @@ async def parse_specs_coro(
         specs = file_specs.copy()
 
     if create_blanks:
-        logger.info(f"Trying to create a blank cube with evenly spaced {spequencies}")
+        msg = f"Trying to create a blank cube with evenly spaced {spequencies}"
+        logger.info(msg)
         specs, missing_chan_idx = even_spacing(
             file_specs, time_domain_mode=time_domain_mode
         )
@@ -507,9 +510,9 @@ def get_polarisation(header: fits.Header) -> int:
         zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix)
     ):
         if ctype == "STOKES":
-            assert (
-                naxis <= 1
-            ), f"Only one polarisation axis is supported - found {naxis}"
+            assert naxis <= 1, (
+                f"Only one polarisation axis is supported - found {naxis}"
+            )
             return int(crpix - 1)
     return 0
 
@@ -654,9 +657,8 @@ async def combine_fits_coro(
     with out_cube.open("rb+") as file_handle:
         for new_channel in new_channels:
             is_missing = missing_chan_idx[new_channel]
-            logger.info(
-                f"Channel {new_channel} missing == {missing_chan_idx[new_channel]}"
-            )
+            msg = f"Channel {new_channel} missing == {is_missing}"
+            logger.info(msg)
             old_channel = new_to_old.get(new_channel)
             if is_missing:
                 old_channel = 0

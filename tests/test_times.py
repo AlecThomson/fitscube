@@ -10,7 +10,7 @@ from astropy.time import Time
 from fitscube.combine_fits import combine_fits, parse_specs
 
 
-@pytest.fixture()
+@pytest.fixture
 def even_specs() -> u.Quantity:
     rng = np.random.default_rng()
     # mjd 60000 to 60000.2
@@ -23,13 +23,13 @@ def even_specs() -> u.Quantity:
     return np.linspace(start, end, num) * u.s
 
 
-@pytest.fixture()
+@pytest.fixture
 def output_file():
     yield Path("test.fits")
     Path("test.fits").unlink()
 
 
-@pytest.fixture()
+@pytest.fixture
 def file_list(even_specs: u.Quantity):
     image = np.ones((1, 10, 10))
     for i, spec in enumerate(even_specs):
