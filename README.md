@@ -78,28 +78,28 @@ Command line:
 
 ```
 ❯ fitscube -h
-usage: fitscube [-h] [-o] [--create-blanks] [--freq-file FREQ_FILE | --freqs FREQS [FREQS ...] | --ignore-freq] [-v] [--max-workers MAX_WORKERS] file_list [file_list ...] out_cube
+usage: fitscube [-h] [-o] [--create-blanks] [--time-domain] [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v] [--max-workers MAX_WORKERS] file_list [file_list ...] out_cube
 
-Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - Frequency is either a WCS axis or in the REFFREQ header keyword -
-All the relevant information is in the first header of the first image
+Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant information is in the first header of the first image - Frequency is either a WCS axis or in the REFFREQ header keyword OR - Time is
+present in the DATE-OBS header keyword for time-domain-mode
 
 positional arguments:
-  file_list             List of FITS files to combine (in frequency order)
+  file_list             List of FITS files to combine (in frequency or time order)
   out_cube              Output FITS file
 
 options:
   -h, --help            show this help message and exit
   -o, --overwrite       Overwrite output file if it exists
   --create-blanks       Try to create a blank cube with evenly spaced frequencies
+  --time-domain         Flag for constructing a time-domain cube
   --spec-file SPEC_FILE
                         File containing frequencies in Hz or times in MJD s (if --time-domain == True)
   --specs SPECS [SPECS ...]
-                        List of spequencies in Hz or MJD s
+                        List of frequencies or times in Hz or MJD s respectively
   --ignore-spec         Ignore frequency or time information and just stack (probably not what you want)
   -v, --verbosity       Increase output verbosity
   --max-workers MAX_WORKERS
                         Maximum number of workers to use for concurrent processing
-  --time-domain         Flag for constructing a time-domain cube
 ```
 
 Python:
@@ -127,8 +127,3 @@ MIT
 ## Contributing
 
 Contributions are welcome. Please open an issue or pull request.
-
-## TODO
-
-- [ ] Add support for non-frequency axes
-- [ ] Add convolution to a common resolution via RACS-Tools
