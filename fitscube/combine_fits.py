@@ -4,9 +4,9 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid
-- Frequency is either a WCS axis or in the REFFREQ header keyword
 - All the relevant information is in the first header of the first image
-
+- Frequency is either a WCS axis or in the REFFREQ header keyword OR
+- Time is present in the DATE-OBS header keyword for time-domain-mode
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import astropy.units as u
 import numpy as np
 from astropy.io import fits
 from astropy.table import Table
+from astropy.time import Time
 from astropy.wcs import WCS
 from numpy.typing import ArrayLike
 from radio_beam import Beam, Beams
@@ -49,32 +50,33 @@ class InitResult(NamedTuple):
 
     header: fits.Header
     """Output header"""
-    freq_idx: int
-    """Index of frequency axis"""
-    freq_fits_idx: int
-    """FITS index of frequency axis"""
+    spec_idx: int
+    """Index of Frequency/Time axis"""
+    spec_fits_idx: int
+    """FITS index of Frequency/Time axis"""
     is_2d: bool
     """Whether the input is 2D"""
 
 
-class FrequencyInfo(NamedTuple):
-    """Frequency information."""
+# Note: spequency = generic term for time or frequency
+class SpequencyInfo(NamedTuple):
+    """Frequency/time information."""
 
-    freqs: u.Quantity
-    """Frequencies"""
+    specs: u.Quantity
+    """Frequencies/Times"""
     missing_chan_idx: ArrayLike
     """Missing channel indices"""
 
 
-class FileFrequencyInfo(NamedTuple):
-    """File frequency information."""
+class FileSpequencyInfo(NamedTuple):
+    """File frequency/time information."""
 
-    file_freqs: u.Quantity
-    """Frequencies matching each file"""
-    freqs: u.Quantity
-    """Frequencies"""
+    file_specs: u.Quantity
+    """Frequencies or times matching each file"""
+    specs: u.Quantity
+    """Frequency/time in Hz or s"""
     missing_chan_idx: ArrayLike
-    """Missing channel indices"""
+    """Missing channel/time indices"""
 
 
 async def write_channel_to_cube_coro(
@@ -98,7 +100,9 @@ def np_arange_fix(start: float, stop: float, step: float) -> ArrayLike:
     return np.arange(start, stop, step)
 
 
-def isin_close(element: ArrayLike, test_element: ArrayLike) -> ArrayLike:
+def isin_close(
+    element: ArrayLike, test_element: ArrayLike, time_domain_mode: bool = False
+) -> ArrayLike:
     """Check if element is in test_element, within a tolerance.
 
     Args:
@@ -108,26 +112,35 @@ def isin_close(element: ArrayLike, test_element: ArrayLike) -> ArrayLike:
     Returns:
         ArrayLike: Boolean array
     """
-    return np.isclose(element[:, None], test_element).any(1)
+    if time_domain_mode:
+        # the following should be sufficient to test integration times to ~5ms accuracy
+        rtol = 1e-10
+        atol = 1e-9
+    else:
+        # defaults for np.isclose
+        rtol = 1e-5
+        atol = 1e-9
+    return np.isclose(element[:, None], test_element, atol, rtol).any(1)
 
 
-def even_spacing(freqs: u.Quantity) -> FrequencyInfo:
-    """Make the frequencies evenly spaced.
+def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
+    """Make the frequencies or times evenly spaced.
 
     Args:
-        freqs (u.Quantity): Original frequencies
+        specs (u.Quantity): Original frequencies/times
 
     Returns:
-        FrequencyInfo: freqs, missing_chan_idx
+        SpequencyInfo: specs, missing_chan_idx
     """
-    freqs_arr = freqs.value.astype(np.longdouble)
-    diffs = np.diff(freqs_arr)
+    specs_arr = specs.value.astype(np.longdouble)
+    diffs = np.diff(specs_arr)
     min_diff: float = np.min(diffs)
     # Create a new array with the minimum difference
-    new_freqs = np_arange_fix(freqs_arr[0], freqs_arr[-1], min_diff)
-    missing_chan_idx = np.logical_not(isin_close(new_freqs, freqs_arr))
-
-    return FrequencyInfo(new_freqs * freqs.unit, missing_chan_idx)
+    new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], min_diff)
+    missing_chan_idx = np.logical_not(
+        isin_close(new_specs, specs_arr, time_domain_mode)
+    )
+    return SpequencyInfo(new_specs * specs.unit, missing_chan_idx)
 
 
 async def create_cube_from_scratch_coro(
@@ -209,11 +222,12 @@ async def create_cube_from_scratch_coro(
 async def create_output_cube_coro(
     old_name: Path,
     out_cube: Path,
-    freqs: u.Quantity,
-    ignore_freq: bool = False,
+    specs: u.Quantity,
+    ignore_spec: bool = False,
     has_beams: bool = False,
     single_beam: bool = False,
     overwrite: bool = False,
+    time_domain_mode: bool = False,
 ) -> InitResult:
     """Initialize the data cube.
 
@@ -226,14 +240,20 @@ async def create_output_cube_coro(
         ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        InitResult: header, freq_idx, freq_fits_idx, is_2d
+        InitResult: header, spec_idx, spec_fits_idx, is_2d
     """
-    old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
-    even_freq = np.diff(freqs).std() < (1e-4 * u.Hz)
-    if not even_freq:
-        logger.warning("Frequencies are not evenly spaced")
 
-    n_chan = len(freqs)
+    # define units if in time or freq domain
+    unit = u.s if time_domain_mode else u.Hz
+    CTYPE = "TIME" if time_domain_mode else "FREQ"
+
+    old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
+    even_spec = np.diff(specs).std() < (1e-4 * unit)
+    if not even_spec:
+        spequency = "Times" if time_domain_mode else "Frequencies"
+        logger.warning(f"{spequency} are not evenly spaced")
+
+    n_chan = len(specs)
 
     is_2d = len(old_data.shape) == 2
     idx = 0
@@ -243,23 +263,25 @@ async def create_output_cube_coro(
         wcs = WCS(old_header)
         # Look for the frequency axis in wcs
         try:
-            idx = wcs.axis_type_names[::-1].index("FREQ")
+            idx = wcs.axis_type_names[::-1].index(CTYPE)
+
         except ValueError as e:
-            msg = "No FREQ axis found in WCS."
+            msg = f"No {CTYPE} axis found in WCS."
+
             raise ValueError(msg) from e
-        fits_idx = wcs.axis_type_names.index("FREQ") + 1
-        logger.info("FREQ axis found at index %s (NAXIS%s)", idx, fits_idx)
+        fits_idx = wcs.axis_type_names.index(CTYPE) + 1
+        logger.info(f"{CTYPE} axis found at index %s (NAXIS%s)", idx, fits_idx)
 
     new_header = old_header.copy()
     new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
     new_header[f"NAXIS{fits_idx}"] = n_chan
     new_header[f"CRPIX{fits_idx}"] = 1
-    new_header[f"CRVAL{fits_idx}"] = freqs[0].value
-    new_header[f"CDELT{fits_idx}"] = np.diff(freqs).mean().value
-    new_header[f"CUNIT{fits_idx}"] = "Hz"
-    new_header[f"CTYPE{fits_idx}"] = "FREQ"
+    new_header[f"CRVAL{fits_idx}"] = specs[0].value
+    new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
+    new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
+    new_header[f"CTYPE{fits_idx}"] = CTYPE
 
-    if ignore_freq or not even_freq:
+    if ignore_spec or not even_spec:
         new_header[f"CDELT{fits_idx}"] = 1
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
@@ -277,6 +299,9 @@ async def create_output_cube_coro(
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
 
+    if time_domain_mode:
+        new_header["COMMENT"] = "The frequency/chan axis in this cube represents TIME."
+
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
     if is_2d:
@@ -288,117 +313,148 @@ async def create_output_cube_coro(
         output_file=out_cube, output_header=new_header, overwrite=overwrite
     )
     return InitResult(
-        header=output_header, freq_idx=idx, freq_fits_idx=fits_idx, is_2d=is_2d
+        header=output_header, spec_idx=idx, spec_fits_idx=fits_idx, is_2d=is_2d
     )
 
 
 create_output_cube = sync_wrapper(create_output_cube_coro)
 
 
-async def read_freq_from_header_coro(
+def utc_to_mjdsec(utc_time: str) -> float:
+    """
+    convert UTC time (in isot format as found in fits header)
+    to MJD seconds to shunt into a freq
+    """
+    # logger.info(f"UTC time is {utc_time}")
+    secperday = 86400.0
+    return float((Time(utc_time, format="isot")).mjd) * secperday
+
+
+async def read_spec_from_header_coro(
     image_path: Path,
+    time_domain_mode: bool = False,
 ) -> u.Quantity:
     header = await asyncio.to_thread(fits.getheader, image_path)
     wcs = WCS(header)
     array_shape = wcs.array_shape
+    unit = u.s if time_domain_mode else u.Hz
+    QUANTITY = "DATE-OBS" if time_domain_mode else "REFFREQ"
+    spequency = "Time" if time_domain_mode else "Frequency"
     if array_shape is None:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
     is_2d = len(array_shape) == 2
     if is_2d:
         try:
-            freq = await asyncio.to_thread(header.get, "REFFREQ")
-            return freq * u.Hz
+            spec = await asyncio.to_thread(header.get, QUANTITY)
+            if time_domain_mode:
+                spec = utc_to_mjdsec(spec)
+            return spec * unit
         except KeyError as e:
-            msg = "REFFREQ not in header. Cannot combine 2D images without frequency information."
+            msg = f"{QUANTITY} not in header. Cannot combine 2D images without {spequency} information."
             raise KeyError(msg) from e
     try:
         if "SPECSYS" not in header:
             header["SPECSYS"] = "TOPOCENT"
         wcs = WCS(header)
+        if time_domain_mode:
+            spec = await asyncio.to_thread(header.get, QUANTITY)
+            spec = utc_to_mjdsec(spec)
+            return spec * unit
+
         return wcs.spectral.pixel_to_world(0).to(u.Hz)
     except Exception as e:
+        # there should probably be better handling of other errors for time domain mode
         msg = "No FREQ axis found in WCS. Cannot combine N-D images without frequency information."
         raise ValueError(msg) from e
 
 
-read_freq_from_header = sync_wrapper(read_freq_from_header_coro)
+read_spec_from_header = sync_wrapper(read_spec_from_header_coro)
 
 
-async def parse_freqs_coro(
+async def parse_specs_coro(
     file_list: list[Path],
-    freq_file: Path | None = None,
-    freq_list: list[float] | None = None,
-    ignore_freq: bool = False,
+    spec_file: Path | None = None,
+    spec_list: list[float] | None = None,
+    ignore_spec: bool = False,
     create_blanks: bool = False,
-) -> FileFrequencyInfo:
-    """Parse the frequency information.
+    time_domain_mode: bool = False,
+) -> FileSpequencyInfo:
+    """Parse the frequency/time information.
 
     Args:
         file_list (list[str]): List of FITS files
-        freq_file (str | None, optional): File containing frequnecies. Defaults to None.
-        freq_list (list[float] | None, optional): List of frequencies. Defaults to None.
-        ignore_freq (bool | None, optional): Ignore frequency information. Defaults to False.
+        spec_file (str | None, optional): File containing frequencies/times. Defaults to None.
+        spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
+        ignore_spec (bool | None, optional): Ignore frequency/time information. Defaults to False.
 
     Raises:
-        ValueError: If both freq_file and freq_list are specified
-        KeyError: If 2D and REFFREQ is not in header
+        ValueError: If both spec_file and spec_list are specified
+        KeyError: If 2D and (REFFREQ or DATE-OBS)  is not in header
         ValueError: If not 2D and FREQ is not in header
 
     Returns:
-        FileFrequencyInfo: file_freqs, freqs, missing_chan_idx
+        FileSpequencyInfo: file_specs, specs, missing_chan_idx
     """
-    if ignore_freq:
+    unit = u.s if time_domain_mode else u.Hz
+    spequency = "time" if time_domain_mode else "frequency"
+    spequencies = "times" if time_domain_mode else "frequencies"
+    if ignore_spec:
         logger.info("Ignoring frequency information")
-        return FileFrequencyInfo(
-            file_freqs=np.arange(len(file_list)) * u.Hz,
-            freqs=np.arange(len(file_list)) * u.Hz,
+        return FileSpequencyInfo(
+            file_specs=np.arange(len(file_list)) * unit,
+            specs=np.arange(len(file_list)) * unit,
             missing_chan_idx=np.zeros(len(file_list)).astype(bool),
         )
 
-    if freq_file is not None and freq_list is not None:
-        msg = "Must specify either freq_file or freq_list, not both"
+    if spec_file is not None and spec_list is not None:
+        msg = "Must specify either spec_file or spec_list, not both"
         raise ValueError(msg)
 
-    if freq_file is not None:
-        logger.info("Reading frequencies from %s", freq_file)
-        file_freqs = np.loadtxt(freq_file) * u.Hz
+    if spec_file is not None:
+        logger.info("Reading  from %s", spec_file)
+        file_specs = np.loadtxt(spec_file) * unit
         assert (
-            len(file_freqs) == len(file_list)
-        ), f"Number of frequencies in {freq_file} ({len({file_freqs})}) does not match number of images ({len(file_list)})"
+            len(file_specs) == len(file_list)
+        ), f"Number of {spequencies} in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
 
     else:
-        logger.info("Reading frequencies from FITS files")
+        logger.info(f"Reading {spequency} from FITS files")
         first_header = fits.getheader(file_list[0])
         if "SPECSYS" not in first_header:
             logger.warning("SPECSYS not in header(s). Will set to TOPOCENT")
-        # file_freqs = np.arange(len(file_list)) * u.Hz
+        # file_specs = np.arange(len(file_list)) * u.Hz
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
         coros = []
         for image_path in file_list:
-            coro = read_freq_from_header_coro(image_path)
+            coro = read_spec_from_header_coro(
+                image_path, time_domain_mode=time_domain_mode
+            )
             coros.append(coro)
 
-        list_of_freqs = await gather_with_limit(
-            None, *coros, desc="Extracting frequencies"
+        list_of_specs = await gather_with_limit(
+            None, *coros, desc=f"Extracting {spequencies}"
         )
-        file_freqs = np.array([f.to(u.Hz).value for f in list_of_freqs]) * u.Hz
 
-        freqs = file_freqs.copy()
+        file_specs = np.array([f.to(unit).value for f in list_of_specs]) * unit
+
+        specs = file_specs.copy()
 
     if create_blanks:
-        logger.info("Trying to create a blank cube with evenly spaced frequencies")
-        freqs, missing_chan_idx = even_spacing(file_freqs)
+        logger.info(f"Trying to create a blank cube with evenly spaced {spequencies}")
+        specs, missing_chan_idx = even_spacing(
+            file_specs, time_domain_mode=time_domain_mode
+        )
 
-    return FileFrequencyInfo(
-        file_freqs=file_freqs,
-        freqs=freqs,
+    return FileSpequencyInfo(
+        file_specs=file_specs,
+        specs=specs,
         missing_chan_idx=missing_chan_idx,
     )
 
 
-parse_freqs = sync_wrapper(parse_freqs_coro)
+parse_specs = sync_wrapper(parse_specs_coro)
 
 
 def parse_beams(
@@ -527,33 +583,36 @@ async def process_channel(
 async def combine_fits_coro(
     file_list: list[Path],
     out_cube: Path,
-    freq_file: Path | None = None,
-    freq_list: list[float] | None = None,
-    ignore_freq: bool = False,
+    spec_file: Path | None = None,
+    spec_list: list[float] | None = None,
+    ignore_spec: bool = False,
     create_blanks: bool = False,
     overwrite: bool = False,
     max_workers: int | None = None,
+    time_domain_mode: bool = False,
 ) -> u.Quantity:
     """Combine FITS files into a cube.
+    Can handle either frequency or time dimensions agnostically
 
     Args:
-        file_list (list[Path]): List of FITS files to combine
-        freq_file (Path | None, optional): Frequency file. Defaults to None.
-        freq_list (list[float] | None, optional): List of frequencies. Defaults to None.
-        ignore_freq (bool, optional): Ignore frequency information. Defaults to False.
+        spec_file (Path | None, optional): Frequency/time file. Defaults to None.
+        spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
+        ignore_spec (bool, optional): Ignore frequency/time information. Defaults to False.
         create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
+        time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
     """
     # TODO: Check that all files have the same WCS
 
-    file_freqs, freqs, missing_chan_idx = await parse_freqs_coro(
-        freq_file=freq_file,
-        freq_list=freq_list,
-        ignore_freq=ignore_freq,
+    file_specs, specs, missing_chan_idx = await parse_specs_coro(
+        spec_file=spec_file,
+        spec_list=spec_list,
+        ignore_spec=ignore_spec,
         file_list=file_list,
         create_blanks=create_blanks,
+        time_domain_mode=time_domain_mode,
     )
     has_beams = "BMAJ" in fits.getheader(file_list[0])
     if has_beams:
@@ -567,26 +626,27 @@ async def combine_fits_coro(
         beams = None
         single_beam = False
 
-    # Sort the files by frequency
-    old_sort_idx = np.argsort(file_freqs)
+    # Sort the files by spequency
+    old_sort_idx = np.argsort(file_specs)
     file_list = np.array(file_list)[old_sort_idx].tolist()
-    new_sort_idx = np.argsort(freqs)
-    freqs = freqs[new_sort_idx]
+    new_sort_idx = np.argsort(specs)
+    specs = specs[new_sort_idx]
     missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     # Initialize the data cube
     new_header, _, _, _ = await create_output_cube_coro(
         old_name=file_list[0],
         out_cube=out_cube,
-        freqs=freqs,
-        ignore_freq=ignore_freq,
+        specs=specs,
+        ignore_spec=ignore_spec,
         has_beams=has_beams,
         single_beam=single_beam,
         overwrite=overwrite,
+        time_domain_mode=time_domain_mode,
     )
 
-    new_channels = np.arange(len(freqs))
-    old_channels = np.arange(len(file_freqs))
+    new_channels = np.arange(len(specs))
+    old_channels = np.arange(len(file_specs))
 
     new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
 
@@ -594,6 +654,9 @@ async def combine_fits_coro(
     with out_cube.open("rb+") as file_handle:
         for new_channel in new_channels:
             is_missing = missing_chan_idx[new_channel]
+            logger.info(
+                f"Channel {new_channel} missing == {missing_chan_idx[new_channel]}"
+            )
             old_channel = new_to_old.get(new_channel)
             if is_missing:
                 old_channel = 0
@@ -625,7 +688,7 @@ async def combine_fits_coro(
             header=beam_table_hdu.header,
         )
 
-    return freqs
+    return specs
 
 
 combine_fits = sync_wrapper(combine_fits_coro)
@@ -637,7 +700,7 @@ def cli() -> None:
     parser.add_argument(
         "file_list",
         nargs="+",
-        help="List of FITS files to combine (in frequency order)",
+        help="List of FITS files to combine (in frequency or time order)",
         type=Path,
     )
     parser.add_argument("out_cube", help="Output FITS file", type=Path)
@@ -652,25 +715,31 @@ def cli() -> None:
         action="store_true",
         help="Try to create a blank cube with evenly spaced frequencies",
     )
+    parser.add_argument(
+        "--time-domain",
+        action="store_true",
+        help="Flag for constructing a time-domain cube",
+        default=False,
+    )
     # Add options for specifying frequencies
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--freq-file",
-        help="File containing frequencies in Hz",
+        "--spec-file",
+        help="File containing frequencies in Hz or times in MJD s (if --time-domain == True)",
         type=Path,
         default=None,
     )
     group.add_argument(
-        "--freqs",
+        "--specs",
         nargs="+",
-        help="List of frequencies in Hz",
+        help="List of frequencies or times in Hz or MJD s respectively",
         type=float,
         default=None,
     )
     group.add_argument(
-        "--ignore-freq",
+        "--ignore-spec",
         action="store_true",
-        help="Ignore frequency information and just stack (probably not what you want)",
+        help="Ignore frequency or time information and just stack (probably not what you want)",
     )
     parser.add_argument(
         "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
@@ -688,32 +757,38 @@ def cli() -> None:
     )
     overwrite = bool(args.overwrite)
     out_cube = Path(args.out_cube)
+    time_domain_mode = bool(args.time_domain)
     if not overwrite and out_cube.exists():
         msg = f"Output file {out_cube} already exists. Use --overwrite to overwrite."
         raise FileExistsError(msg)
 
-    freqs_file = out_cube.with_suffix(".freqs_Hz.txt")
-    if freqs_file.exists() and not overwrite:
-        msg = f"Output file {freqs_file} already exists. Use --overwrite to overwrite."
+    output_unit = u.s if time_domain_mode else u.Hz
+
+    specs_file = out_cube.with_suffix(f".specs_{output_unit:fits}.txt")
+
+    if specs_file.exists() and not overwrite:
+        msg = f"Output file {specs_file} already exists. Use --overwrite to overwrite."
         raise FileExistsError(msg)
 
     if overwrite:
         logger.info("Overwriting output files")
 
-    freqs = combine_fits(
+    specs = combine_fits(
         file_list=args.file_list,
         out_cube=out_cube,
-        freq_file=args.freq_file,
-        freq_list=args.freqs,
-        ignore_freq=args.ignore_freq,
+        spec_file=args.spec_file,
+        spec_list=args.specs,
+        ignore_spec=args.ignore_spec,
         create_blanks=args.create_blanks,
         overwrite=overwrite,
         max_workers=args.max_workers,
+        time_domain_mode=time_domain_mode,
     )
 
+    spequency = "times" if time_domain_mode else "frequencies"
     logger.info("Written cube to %s", out_cube)
-    np.savetxt(freqs_file, freqs.to(u.Hz).value)
-    logger.info("Written frequencies to %s", freqs_file)
+    np.savetxt(specs_file, specs.to(output_unit).value)
+    logger.info(f"Written {spequency} to %s", specs_file)
 
 
 if __name__ == "__main__":
