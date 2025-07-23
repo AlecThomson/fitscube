@@ -36,6 +36,8 @@ class FreqWCS:
     """The axis count that the frequency corresponds to"""
     ctype: str
     """The FITS WCS key name"""
+    crpix: int
+    """The reference index position"""
     crval: float
     """The reference value stored in the header"""
     cdelt: float
@@ -62,6 +64,7 @@ def find_freq_axis(header: fits.header.Header) -> FreqWCS:
             return FreqWCS(
                 axis=axis,
                 ctype=header[f"CTYPE{axis}"],
+                crpix=header[f"CRPIX{axis}"],
                 crval=header[f"CRVAL{axis}"],
                 cdelt=header[f"CDELT{axis}"],
                 cunit=header[f"CUNIT{axis}"],
@@ -73,10 +76,11 @@ def create_plane_freq_wcs(
     original_freq_wcs: FreqWCS, channel_index: int
 ) -> FreqWCS:
 
-    channel_freq = original_freq_wcs.crval + (channel_index*original_freq_wcs.crval)
+    channel_freq = original_freq_wcs.crval + (channel_index*original_freq_wcs.cdelt)
     return FreqWCS(
         axis=original_freq_wcs.axis,
         ctype=original_freq_wcs.ctype,
+        crpix=1,
         crval=channel_freq,
         cdelt=original_freq_wcs.cdelt,
         cunit=original_freq_wcs.cunit
