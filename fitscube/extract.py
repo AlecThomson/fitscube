@@ -52,6 +52,17 @@ class FreqWCS:
     """the unit of the frequency information"""
 
 
+def fits_file_contains_beam_table(header: fits.header.Header | Path) -> bool:
+    loaded_header: fits.header.Header = (
+        fits.getheader(header) if isinstance(header, Path) else header
+    )
+
+    if "CASAMBM" not in loaded_header:
+        return False
+
+    return bool(loaded_header["CASAMBM"])
+
+
 def find_freq_axis(header: fits.header.Header) -> FreqWCS:
     """Attempt to find the axies of the channel in the data
     cube that corresponds to frequency/channels.

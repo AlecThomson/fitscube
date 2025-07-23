@@ -8,6 +8,7 @@ from astropy.io import fits
 from fitscube.extract import (
     create_plane_freq_wcs,
     find_freq_axis,
+    fits_file_contains_beam_table,
     get_output_path,
     update_header_for_frequency,
 )
@@ -84,3 +85,18 @@ def test_update_header_for_frequency(example_header) -> None:
         if key in ("CPIX4", "CRVAL4", "CDELT4"):
             continue
         assert header[key] == new_header[key]
+
+
+def test_fits_file_contains_beam_table(example_header) -> None:
+    """See if the header / fits file contains a beam table"""
+
+    header = fits.header.Header.fromstring(example_header)
+
+    assert not fits_file_contains_beam_table(header=header)
+
+
+def test_fits_file_contains_beam_table_2(headers) -> None:
+    """More tests for beam"""
+    header = fits.header.Header.fromstring(headers["beams"])
+
+    assert fits_file_contains_beam_table(header=header)
