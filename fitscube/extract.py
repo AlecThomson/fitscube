@@ -69,6 +69,19 @@ def find_freq_axis(header: fits.header.Header) -> FreqWCS:
     
     raise FREQMissingException("Did not find the frequency axis")
 
+def create_plane_freq_wcs(
+    original_freq_wcs: FreqWCS, channel_index: int
+) -> FreqWCS:
+
+    channel_freq = original_freq_wcs.crval + (channel_index*original_freq_wcs.crval)
+    return FreqWCS(
+        axis=original_freq_wcs.axis,
+        ctype=original_freq_wcs.ctype,
+        crval=channel_freq,
+        cdelt=original_freq_wcs.cdelt,
+        cunit=original_freq_wcs.cunit
+    )
+
 def update_header_for_frequency(
     header: fits.header.Header, 
     freq_wcs: FreqWCS,
@@ -94,8 +107,8 @@ def extract_plane_from_cube(
     logger.info(header)
     
     logger.info(f"\nData shape: {data.shape}")
-    freq_axis = find_freq_axis(header=header)
-    freq_cube_index = len(data.shape) - freq_axis
+    freq_axis_wcs = find_freq_axis(header=header)
+    freq_cube_index = len(data.shape) - freq_axis_wcs.axis
     
     # Get the channel index requested
     freq_plane_data = np.take(
@@ -103,7 +116,9 @@ def extract_plane_from_cube(
     )
     # and pad it back so dimensions match
     freq_plane_data = np.expand_dims(freq_plane_data, axis=freq_cube_index)
-    
+    freq_plane_header = update_header_for_frequency(
+        header=header, freq_wcs=freq_axis_wcs
+    )
 
     return output_path
 
