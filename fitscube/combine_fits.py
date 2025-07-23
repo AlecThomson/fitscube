@@ -631,15 +631,14 @@ async def combine_fits_coro(
         for beam in beams:
             logger.info(f"{beams[0]==beam=}")
 
+        # Be sure to match on beam shaope, not on area as a
+        # beam[0] == beam[1] would be checking.
         same_beam = (
             np.isclose(beams[0].major, beams.major)
             & np.isclose(beams[0].minor, beams.minor)
             & np.isclose(beams[0].pa, beams.pa)
         )
         single_beam = np.all(same_beam)
-        # NOTE: np.allclose(beams[0], beams) returns True, but
-        # np.allclose(beams[0].major, beams.major) returns False. The
-        # can not be correct.
 
         if single_beam:
             logger.info("All beams are the same")
