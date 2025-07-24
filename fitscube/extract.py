@@ -6,8 +6,10 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 
+import astropy.units as u
 import numpy as np
 from astropy.io import fits
+from radio_beam import Beam, Beams
 
 from fitscube.exceptions import FREQMissingException
 from fitscube.logging import logger
@@ -63,6 +65,39 @@ def fits_file_contains_beam_table(header: fits.header.Header | Path) -> bool:
     return bool(loaded_header["CASAMBM"])
 
 
+def extract_beam_from_beam_table(fits_path: Path, channel_index: int) -> Beam:
+    """Extract the beam that corresponds to the channel requested. The beam
+    is drawn from a beam table that is inserted into the FITS cube. It is
+    expected that the beam table exists.
+
+    Args:
+        fits_path (Path): The fits table to inspect for a beam table, and return the channel beam
+        channel_index (int): The channel to extract the beam for
+
+    Raises:
+        ValueError: Raised when a beam table can not be found
+
+    Returns:
+        Beam: The beam that corresponds to a desired channel
+    """
+    logger.info(f"Searching for a beam table in {fits_path=}")
+    with fits.open(fits_path) as open_fits:
+        beams: Beams | None = None
+
+        if "BEAMS" not in open_fits:
+            msg = "Beam table was not found"
+            raise ValueError(msg)
+
+        beam_hdu = open_fits["BEAMS"]
+
+        logger.info("Found the beams binary table")
+        beams = Beams.from_fits_bintable(beam_hdu)
+
+        assert beams is not None, "beams is empty, which should not happen"
+
+    return beams[channel_index]
+
+
 def find_freq_axis(header: fits.header.Header) -> FreqWCS:
     """Attempt to find the axies of the channel in the data
     cube that corresponds to frequency/channels.
@@ -93,6 +128,15 @@ def find_freq_axis(header: fits.header.Header) -> FreqWCS:
 
 
 def create_plane_freq_wcs(original_freq_wcs: FreqWCS, channel_index: int) -> FreqWCS:
+    """Create the frequency fields appropriate for a extracted channel
+
+    Args:
+        original_freq_wcs (FreqWCS): The frequency information describing the spectral axis
+        channel_index (int): The channel to extract
+
+    Returns:
+        FreqWCS: The frequency information for a channel
+    """
     channel_freq = original_freq_wcs.crval + (channel_index * original_freq_wcs.cdelt)
     return FreqWCS(
         axis=original_freq_wcs.axis,
@@ -105,7 +149,10 @@ def create_plane_freq_wcs(original_freq_wcs: FreqWCS, channel_index: int) -> Fre
 
 
 def update_header_for_frequency(
-    header: fits.header.Header, freq_wcs: FreqWCS, channel_index: int
+    header: fits.header.Header,
+    freq_wcs: FreqWCS,
+    channel_index: int,
+    extract_beam_from_file: Path | None = None,
 ) -> fits.header.Header:
     # Get the new wcs items for the channels
     plane_freq_wcs = create_plane_freq_wcs(
@@ -119,10 +166,35 @@ def update_header_for_frequency(
     out_header[f"CDELT{_idx}"] = plane_freq_wcs.cdelt
     out_header[f"CUNIT{_idx}"] = plane_freq_wcs.cunit
 
+    if extract_beam_from_file and fits_file_contains_beam_table(
+        header=extract_beam_from_file
+    ):
+        channel_beam: Beam = extract_beam_from_beam_table(
+            fits_path=extract_beam_from_file, channel_index=channel_index
+        )
+        # TODO: Get it from the header oif there is no beam table?
+
+        out_header["BMAJ"] = channel_beam.major.to(u.rad).value
+        out_header["BMIN"] = channel_beam.minor.to(u.rad).value
+        out_header["BPA"] = channel_beam.pa.to(u.deg).value
+
+        out_header.pop("CASAMBM", None)
+
     return out_header
 
 
 def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) -> Path:
+    """Extract the channel image from a cube, and output it as a new
+    fits file. The dimensionality of the data will be the same as the
+    input cube.
+
+    Args:
+        fits_cube (Path): The base fits cube to draw from
+        extract_options (ExtractOptions): Options to drive the extraction
+
+    Returns:
+        Path: The output file
+    """
     output_path: Path = get_output_path(
         input_path=fits_cube, channel_index=extract_options.channel_index
     )
@@ -154,8 +226,13 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
         header=header,
         freq_wcs=freq_axis_wcs,
         channel_index=extract_options.channel_index,
+        extract_beam_from_file=fits_cube
+        if fits_file_contains_beam_table(header)
+        else None,
     )
     logger.info(f"Formed new header: {freq_plane_header}")
+
+    fits.writeto(output_path, data=freq_plane_data, header=freq_plane_header)
 
     return output_path
 
