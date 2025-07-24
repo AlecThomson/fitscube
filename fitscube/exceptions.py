@@ -7,3 +7,7 @@ class FITSCubeException(Exception):
 
 class FREQMissingException(FITSCubeException):
     """Missing FREQ axis in fits cube"""
+
+
+class ChannelMissingException(FITSCubeException):
+    """Raised when a channel can not be accessed"""

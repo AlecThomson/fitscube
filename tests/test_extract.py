@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from astropy.io import fits
+from fitscube.exceptions import ChannelMissingException
 from fitscube.extract import (
     ExtractOptions,
     create_plane_freq_wcs,
@@ -151,3 +153,17 @@ def test_compare_extracted_to_image(cube_path, image_paths, tmpdir) -> None:
     assert np.isclose(sub_header["BMAJ"], image_header["BMAJ"])
     assert np.isclose(sub_header["BMAJ"], image_header["BMAJ"])
     assert np.isclose(sub_header["BPA"], image_header["BPA"])
+
+
+def test_compare_extracted_to_image_bad_channel(cube_path, tmpdir) -> None:
+    """Capture error if a channel error is raised"""
+
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    channel = 9999
+
+    extract_options = ExtractOptions(
+        hdu_index=0, channel_index=channel, output_path=output_file
+    )
+    with pytest.raises(ChannelMissingException):
+        extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)

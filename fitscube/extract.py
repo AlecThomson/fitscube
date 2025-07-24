@@ -11,7 +11,7 @@ import numpy as np
 from astropy.io import fits
 from radio_beam import Beam, Beams
 
-from fitscube.exceptions import FREQMissingException
+from fitscube.exceptions import ChannelMissingException, FREQMissingException
 from fitscube.logging import logger, set_verbosity
 
 
@@ -243,6 +243,10 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     logger.info(f"Data shape: {data.shape}")
     freq_axis_wcs = find_freq_axis(header=header)
     freq_cube_index = len(data.shape) - freq_axis_wcs.axis
+
+    if extract_options.channel_index > data.shape[freq_axis_wcs.axis] - 1:
+        msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}"
+        raise ChannelMissingException(msg)
 
     # Get the channel index requested
     freq_plane_data = np.take(data, extract_options.channel_index, axis=freq_cube_index)
