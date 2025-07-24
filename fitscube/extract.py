@@ -26,7 +26,7 @@ class ExtractOptions:
     overwrite: bool = False
     """overwrite the output file, if it exists"""
     output_path: Path | None = None
-    """The output path of the new file. If None it is generated from the name= of base fits cube."""
+    """The output path of the new file. If None it is generated from the name of base fits cube."""
 
 
 @dataclass
@@ -216,8 +216,12 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     Returns:
         Path: The output file
     """
-    output_path: Path = get_output_path(
-        input_path=fits_cube, channel_index=extract_options.channel_index
+    output_path: Path = (
+        extract_options.output_path
+        if extract_options.output_path
+        else get_output_path(
+            input_path=fits_cube, channel_index=extract_options.channel_index
+        )
     )
 
     logger.info(f"Opening {fits_cube=}")
