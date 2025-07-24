@@ -207,9 +207,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
             f"Extracting header and data for hdu_index={extract_options.hdu_index}"
         )
         header = open_fits[extract_options.hdu_index].header
-        data = open_fits[extract_options.hdu_index].data[
-            ..., extract_options.channel_index, :, :
-        ]
+        data = open_fits[extract_options.hdu_index].data
 
     logger.info("Extracted header")
     logger.info(header)
@@ -232,6 +230,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     )
     logger.info(f"Formed new header: {freq_plane_header}")
 
+    logger.info(f"Writing to {output_path=}")
     fits.writeto(output_path, data=freq_plane_data, header=freq_plane_header)
 
     return output_path
