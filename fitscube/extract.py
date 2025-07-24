@@ -239,8 +239,14 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="Extract a plane from a fits cube")
 
-    parser.add_argument("fitscube", type=Path, help="The cube to extract a plane from")
+    parser.add_argument("fits_cube", type=Path, help="The cube to extract a plane from")
     parser.add_argument("--channel", type=int, default=0, help="The channel to extract")
+    parser.add_argument(
+        "--hdu",
+        type=int,
+        default=0,
+        help="The HDU index of the data card containing the cube data",
+    )
 
     return parser
 
@@ -248,7 +254,12 @@ def get_parser() -> ArgumentParser:
 def cli() -> None:
     parser = get_parser()
 
-    _ = parser.parse_args()
+    args = parser.parse_args()
+
+    extract_options = ExtractOptions(
+        hdu_index=args.hdu_index, channel_index=args.channel_index
+    )
+    extract_plane_from_cube(fits_cube=args.fits_cube, extract_options=extract_options)
 
 
 if __name__ == "__main__":
