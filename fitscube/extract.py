@@ -12,7 +12,7 @@ from astropy.io import fits
 from radio_beam import Beam, Beams
 
 from fitscube.exceptions import FREQMissingException
-from fitscube.logging import logger
+from fitscube.logging import logger, set_verbosity
 
 
 @dataclass
@@ -23,16 +23,8 @@ class ExtractOptions:
     """The HDU in the fits cube to access (e.g. for header and data)"""
     channel_index: int = 0
     """The channel of the cube to extract"""
-
-
-def get_output_path(input_path: Path, channel_index: int) -> Path:
-    # The input_path suffix returns a string with a period
-    channel_suffix = f".channel-{channel_index}{input_path.suffix}"
-    output_path = input_path.with_suffix(channel_suffix)
-
-    logger.debug(f"The formed {output_path=}")
-
-    return output_path
+    overwrite: bool = False
+    """overwrite the output file, if it exists"""
 
 
 @dataclass
@@ -54,7 +46,34 @@ class FreqWCS:
     """the unit of the frequency information"""
 
 
+def get_output_path(input_path: Path, channel_index: int) -> Path:
+    """Create the output path to write the plane to
+
+    Args:
+        input_path (Path): The base input path name
+        channel_index (int): The channel index to extract
+
+    Returns:
+        Path: New output path for the plane-only fits image
+    """
+    # The input_path suffix returns a string with a period
+    channel_suffix = f".channel-{channel_index}{input_path.suffix}"
+    output_path = input_path.with_suffix(channel_suffix)
+
+    logger.debug(f"The formed {output_path=}")
+
+    return output_path
+
+
 def fits_file_contains_beam_table(header: fits.header.Header | Path) -> bool:
+    """Consider whether a fits file contains a beam table
+
+    Args:
+        header (fits.header.Header | Path): Header to examine. If a Path load the first HDU list
+
+    Returns:
+        bool: Whether the fits header indicates a beam table
+    """
     loaded_header: fits.header.Header = (
         fits.getheader(header) if isinstance(header, Path) else header
     )
@@ -212,7 +231,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     logger.info("Extracted header")
     logger.info(header)
 
-    logger.info(f"\nData shape: {data.shape}")
+    logger.info(f"Data shape: {data.shape}")
     freq_axis_wcs = find_freq_axis(header=header)
     freq_cube_index = len(data.shape) - freq_axis_wcs.axis
 
@@ -225,13 +244,17 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
         freq_wcs=freq_axis_wcs,
         channel_index=extract_options.channel_index,
         extract_beam_from_file=fits_cube
-        if fits_file_contains_beam_table(header)
+        if fits_file_contains_beam_table(header)  # replace with "BEAMS" in opened fits?
         else None,
     )
-    logger.info(f"Formed new header: {freq_plane_header}")
 
     logger.info(f"Writing to {output_path=}")
-    fits.writeto(output_path, data=freq_plane_data, header=freq_plane_header)
+    fits.writeto(
+        output_path,
+        data=freq_plane_data,
+        header=freq_plane_header,
+        overwrite=extract_options.overwrite,
+    )
 
     return output_path
 
@@ -240,12 +263,22 @@ def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="Extract a plane from a fits cube")
 
     parser.add_argument("fits_cube", type=Path, help="The cube to extract a plane from")
-    parser.add_argument("--channel", type=int, default=0, help="The channel to extract")
     parser.add_argument(
-        "--hdu",
+        "--channel-index", type=int, default=0, help="The channel to extract"
+    )
+    parser.add_argument(
+        "--hdu-index",
         type=int,
         default=0,
         help="The HDU index of the data card containing the cube data",
+    )
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite the output file, if it exists.",
     )
 
     return parser
@@ -257,7 +290,12 @@ def cli() -> None:
     args = parser.parse_args()
 
     extract_options = ExtractOptions(
-        hdu_index=args.hdu_index, channel_index=args.channel_index
+        hdu_index=args.hdu_index,
+        channel_index=args.channel_index,
+        overwrite=args.overwrite,
+    )
+    set_verbosity(
+        verbosity=args.verbosity,
     )
     extract_plane_from_cube(fits_cube=args.fits_cube, extract_options=extract_options)
 
