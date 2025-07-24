@@ -38,4 +38,7 @@ def image_paths(tmpdir) -> list[Path]:
     images_zip = Path(__file__).parent / "data" / "images.zip"
 
     unpack_archive(images_zip, tmp_dir)
-    return list(tmp_dir.glob("*fits"))
+    image_paths = list(tmp_dir.glob("*fits"))
+    image_paths.sort()
+
+    return image_paths

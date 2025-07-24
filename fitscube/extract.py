@@ -195,8 +195,8 @@ def update_header_for_frequency(
         )
         # TODO: Get it from the header oif there is no beam table?
 
-        out_header["BMAJ"] = channel_beam.major.to(u.rad).value
-        out_header["BMIN"] = channel_beam.minor.to(u.rad).value
+        out_header["BMAJ"] = channel_beam.major.to(u.deg).value
+        out_header["BMIN"] = channel_beam.minor.to(u.deg).value
         out_header["BPA"] = channel_beam.pa.to(u.deg).value
 
         out_header.pop("CASAMBM", None)
@@ -234,8 +234,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
         header = open_fits[extract_options.hdu_index].header
         data = open_fits[extract_options.hdu_index].data
 
-    logger.info("Extracted header")
-    logger.info(header)
+    logger.info("Extracted header and data")
 
     logger.info(f"Data shape: {data.shape}")
     freq_axis_wcs = find_freq_axis(header=header)

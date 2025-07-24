@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 from astropy.io import fits
 from fitscube.extract import (
+    ExtractOptions,
     create_plane_freq_wcs,
+    extract_plane_from_cube,
     find_freq_axis,
     fits_file_contains_beam_table,
     get_output_path,
@@ -118,3 +121,33 @@ def test_fits_file_contains_beam_table_from_file(cube_path, image_paths) -> None
     whether a beam table exists"""
     assert fits_file_contains_beam_table(cube_path)
     assert not fits_file_contains_beam_table(image_paths[0])
+
+
+def test_compare_extracted_to_image(cube_path, image_paths, tmpdir) -> None:
+    """Perform a single plane extraction and compare it to the base
+    data it was formed from"""
+
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    channel = 0
+
+    extract_options = ExtractOptions(
+        hdu_index=0, channel_index=channel, output_path=output_file
+    )
+
+    sub_path = extract_plane_from_cube(
+        fits_cube=cube_path, extract_options=extract_options
+    )
+
+    assert sub_path == output_file
+    sub_data = fits.getdata(sub_path)
+    image_data = fits.getdata(image_paths[channel])
+
+    assert np.allclose(sub_data, image_data)
+
+    sub_header = fits.getheader(sub_path)
+    image_header = fits.getheader(image_paths[channel])
+
+    assert np.isclose(sub_header["BMAJ"], image_header["BMAJ"])
+    assert np.isclose(sub_header["BMAJ"], image_header["BMAJ"])
+    assert np.isclose(sub_header["BPA"], image_header["BPA"])
