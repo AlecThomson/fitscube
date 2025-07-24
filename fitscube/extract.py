@@ -190,14 +190,18 @@ def update_header_for_frequency(
     if extract_beam_from_file and fits_file_contains_beam_table(
         header=extract_beam_from_file
     ):
-        channel_beam: Beam = extract_beam_from_beam_table(
-            fits_path=extract_beam_from_file, channel_index=channel_index
-        )
-        # TODO: Get it from the header oif there is no beam table?
+        try:
+            channel_beam: Beam = extract_beam_from_beam_table(
+                fits_path=extract_beam_from_file, channel_index=channel_index
+            )
 
-        out_header["BMAJ"] = channel_beam.major.to(u.deg).value
-        out_header["BMIN"] = channel_beam.minor.to(u.deg).value
-        out_header["BPA"] = channel_beam.pa.to(u.deg).value
+            out_header["BMAJ"] = channel_beam.major.to(u.deg).value
+            out_header["BMIN"] = channel_beam.minor.to(u.deg).value
+            out_header["BPA"] = channel_beam.pa.to(u.deg).value
+        except ValueError:
+            logger.info("Unable to find beam table, continuing anyway.")
+            # A single beam could still be defined as the BMAJ/BMIN/BPA
+            # and would have been copied to output_header from the outset
 
         out_header.pop("CASAMBM", None)
 
