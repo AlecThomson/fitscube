@@ -64,7 +64,7 @@ Changelog = "https://github.com/AlecThomson/fitscube/releases"
 
 [project.scripts]
 fitscube_combine = "fitscube.combine_fits:cli"
-fitdscube_extract = "fitscube.extract:cli"
+fitscube_extract = "fitscube.extract:cli"
 
 [tool.hatch]
 version.source = "vcs"
