@@ -100,3 +100,21 @@ def test_fits_file_contains_beam_table_2(headers) -> None:
     header = fits.header.Header.fromstring(headers["beams"])
 
     assert fits_file_contains_beam_table(header=header)
+
+
+def test_cube_file(cube_path) -> None:
+    """Just a check to see if the fits cube packaged can be pulled out"""
+    assert cube_path.exists()
+
+
+def test_image_files(image_paths) -> None:
+    """Just a check to see if the fits cube packaged can be pulled out"""
+
+    assert all(f.exists() for f in image_paths)
+
+
+def test_fits_file_contains_beam_table_from_file(cube_path, image_paths) -> None:
+    """Make sure that the fits cube can be examined from a path and determine
+    whether a beam table exists"""
+    assert fits_file_contains_beam_table(cube_path)
+    assert not fits_file_contains_beam_table(image_paths[0])

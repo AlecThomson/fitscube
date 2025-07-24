@@ -25,6 +25,8 @@ class ExtractOptions:
     """The channel of the cube to extract"""
     overwrite: bool = False
     """overwrite the output file, if it exists"""
+    output_path: Path | None = None
+    """The output path of the new file. If None it is generated from the name= of base fits cube."""
 
 
 @dataclass
@@ -280,6 +282,12 @@ def get_parser() -> ArgumentParser:
         action="store_true",
         help="overwrite the output file, if it exists.",
     )
+    parser.add_argument(
+        "--output-path",
+        type=Path,
+        default=None,
+        help="The name of the new output file. If not specified it is generated from the fits cube name",
+    )
 
     return parser
 
@@ -293,6 +301,7 @@ def cli() -> None:
         hdu_index=args.hdu_index,
         channel_index=args.channel_index,
         overwrite=args.overwrite,
+        output_path=args.output_path,
     )
     set_verbosity(
         verbosity=args.verbosity,
