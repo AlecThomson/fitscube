@@ -63,7 +63,7 @@ Discussions = "https://github.com/AlecThomson/fitscube/discussions"
 Changelog = "https://github.com/AlecThomson/fitscube/releases"
 
 [project.scripts]
-fitscube = "fitscube.combine_fits:cli"
+fitscube = "fitscube.cli:cli"
 
 [tool.hatch]
 version.source = "vcs"

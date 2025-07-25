@@ -41,6 +41,9 @@ class TqdmToLogger(io.StringIO):
             self.logger.log(self.level, self.buf)
 
 
+logger = logging.getLogger("fitscube")
+
+
 def set_verbosity(verbosity: int) -> None:
     """Set the logger verbosity.
 
@@ -57,17 +60,11 @@ def set_verbosity(verbosity: int) -> None:
     else:
         level = logging.CRITICAL
 
-    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
     ch.setLevel(level)
-    logging.getLogger().addHandler(ch)
+    logger.addHandler(ch)
 
 
-logger = logging.getLogger("fitscube")
-
-ch = logging.StreamHandler()
-ch.setFormatter(formatter)
-ch.setLevel(logging.WARNING)
-logger.addHandler(ch)
 TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
