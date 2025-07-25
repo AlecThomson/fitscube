@@ -771,6 +771,8 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> None:
         help="Maximum number of workers to use for concurrent processing",
     )
 
+    return parser
+
 
 def cli(args: argparse.Namespace | None = None) -> None:
     if args is None:
