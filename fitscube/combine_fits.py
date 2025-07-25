@@ -631,7 +631,7 @@ async def combine_fits_coro(
         for beam in beams:
             logger.info(f"{beams[0]==beam=}")
 
-        # Be sure to match on beam shaope, not on area as a
+        # Be sure to match on beam shape, not on area as a
         # beam[0] == beam[1] would be checking.
         same_beam = (
             np.isclose(beams[0].major, beams.major)
@@ -713,9 +713,10 @@ async def combine_fits_coro(
 combine_fits = sync_wrapper(combine_fits_coro)
 
 
-def cli() -> None:
+def get_parser(parser: argparse.ArgumentParser | None = None) -> None:
     """Command-line interface."""
-    parser = argparse.ArgumentParser(description=__doc__)
+
+    parser = parser if parser else argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "file_list",
         nargs="+",
@@ -769,7 +770,12 @@ def cli() -> None:
         default=None,
         help="Maximum number of workers to use for concurrent processing",
     )
-    args = parser.parse_args()
+
+
+def cli(args: argparse.Namespace | None = None) -> None:
+    if args is None:
+        parser = get_parser()
+        args = parser.parse_args()
 
     set_verbosity(
         verbosity=args.verbosity,

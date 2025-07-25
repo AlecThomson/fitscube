@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -272,8 +272,12 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     return output_path
 
 
-def get_parser() -> ArgumentParser:
-    parser = ArgumentParser(description="Extract a plane from a fits cube")
+def get_parser(parser: ArgumentParser | None = None) -> ArgumentParser:
+    parser = (
+        parser
+        if parser
+        else ArgumentParser(description="Extract a plane from a fits cube")
+    )
 
     parser.add_argument("fits_cube", type=Path, help="The cube to extract a plane from")
     parser.add_argument(
@@ -303,10 +307,10 @@ def get_parser() -> ArgumentParser:
     return parser
 
 
-def cli() -> None:
-    parser = get_parser()
-
-    args = parser.parse_args()
+def cli(args: Namespace | None = None) -> None:
+    if args is None:
+        parser = get_parser()
+        args = parser.parse_args()
 
     extract_options = ExtractOptions(
         hdu_index=args.hdu_index,
