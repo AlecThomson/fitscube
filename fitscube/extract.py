@@ -21,8 +21,10 @@ class ExtractOptions:
 
     hdu_index: int = 0
     """The HDU in the fits cube to access (e.g. for header and data)"""
-    channel_index: int = 0
-    """The channel of the cube to extract"""
+    channel_index: int | None = None
+    """The channel of the cube to extract. Defaultys to None"""
+    time_index: int | None = None
+    """The timestep of the cube to extract. Defaultys to None"""
     overwrite: bool = False
     """overwrite the output file, if it exists"""
     output_path: Path | None = None
@@ -46,6 +48,25 @@ class FreqWCS:
     """The step between planes"""
     cunit: str
     """the unit of the frequency information"""
+
+
+def _check_extract_mode(extract_options: ExtractOptions) -> None:
+    """Verify the operation of the extract options axis.
+
+    Args:
+        extract_options (ExtractOptions): The settings providedd to extract fitscube
+
+    Raises:
+        ValueError: Raised if both channel_index and time_index are unset
+        ValueError: Raise if both channel index and time index are set
+    """
+
+    if extract_options.channel_index is None and extract_options.time_index is None:
+        msg = "Both channel index and time index are None. One needs to be set."
+        raise ValueError(msg)
+    if extract_options.channel_index and extract_options.time_index:
+        msg = "Both channel index and time index are set. Only one may be set. "
+        raise ValueError(msg)
 
 
 def get_output_path(input_path: Path, channel_index: int) -> Path:
@@ -220,6 +241,9 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     Returns:
         Path: The output file
     """
+    # Initial sanity check of the axis to extract
+    _check_extract_mode(extract_options=extract_options)
+
     output_path: Path = (
         extract_options.output_path
         if extract_options.output_path
@@ -281,7 +305,10 @@ def get_parser(parser: ArgumentParser | None = None) -> ArgumentParser:
 
     parser.add_argument("fits_cube", type=Path, help="The cube to extract a plane from")
     parser.add_argument(
-        "--channel-index", type=int, default=0, help="The channel to extract"
+        "--channel-index", type=int, default=None, help="The channel to extract"
+    )
+    parser.add_argument(
+        "--time-index", type=int, default=None, help="The channel to extract"
     )
     parser.add_argument(
         "--hdu-index",
@@ -315,6 +342,7 @@ def cli(args: Namespace | None = None) -> None:
     extract_options = ExtractOptions(
         hdu_index=args.hdu_index,
         channel_index=args.channel_index,
+        time_index=args.time_index,
         overwrite=args.overwrite,
         output_path=args.output_path,
     )
