@@ -22,6 +22,16 @@ def headers() -> dict[str, str]:
 
 
 @pytest.fixture
+def timecube_path(tmpdir) -> Path:
+    tmp_dir = Path(tmpdir) / "timecube"
+    tmp_dir.mkdir(exist_ok=True, parents=True)
+    cube_zip = Path(__file__).parent / "data" / "timecube.zip"
+
+    unpack_archive(cube_zip, tmp_dir)
+    return tmp_dir / "test_timecube.fits"
+
+
+@pytest.fixture
 def cube_path(tmpdir) -> Path:
     tmp_dir = Path(tmpdir) / "cube"
     tmp_dir.mkdir(exist_ok=True, parents=True)

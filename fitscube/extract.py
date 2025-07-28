@@ -214,7 +214,7 @@ def find_target_axis(
     # we start counting from 1
     for axis in range(1, naxis + 1):
         if axis_name in header[f"CTYPE{axis}"]:
-            logger.info(f"Found FREQ at {axis=}")
+            logger.info(f"Found {axis_name} at {axis=}")
             return TargetWCS(
                 axis=axis,
                 ctype=header[f"CTYPE{axis}"],
@@ -348,8 +348,8 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     target_axis_wcs = find_target_axis(header=header, target_index=target_index)
     target_cube_index = len(data.shape) - target_axis_wcs.axis
 
-    if target_index.axis_index > data.shape[target_axis_wcs.axis] - 1:
-        msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}"
+    if target_index.axis_index > data.shape[target_cube_index]:
+        msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}, axis shape of {data.shape[target_axis_wcs.axis - 1]}"
         raise ChannelMissingException(msg)
 
     # Get the channel index requested

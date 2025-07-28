@@ -230,3 +230,21 @@ def test_extract_time_from_freq(cube_path, tmpdir) -> None:
 
     with pytest.raises(TargetAxisMissingException):
         extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)
+
+
+def test_extract_time_cube(timecube_path, tmpdir) -> None:
+    """Attempt to extract a timestep from a cube without TIME. Should
+    raise an error
+    """
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    timestep = 200
+
+    extract_options = ExtractOptions(
+        hdu_index=0, time_index=timestep, output_path=output_file
+    )
+
+    timecube = extract_plane_from_cube(
+        fits_cube=timecube_path, extract_options=extract_options
+    )
+    assert timecube.exists()
