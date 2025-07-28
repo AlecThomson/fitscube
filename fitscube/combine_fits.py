@@ -393,6 +393,7 @@ async def parse_specs_coro(
         spec_file (str | None, optional): File containing frequencies/times. Defaults to None.
         spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
         ignore_spec (bool | None, optional): Ignore frequency/time information. Defaults to False.
+        time_domain_mode (bool, optional): Whether these cubes dhould be formed over the time axis. Defaults to False.
 
     Raises:
         ValueError: If both spec_file and spec_list are specified
