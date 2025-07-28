@@ -65,6 +65,20 @@ class TargetIndex:
 def create_target_index(
     channel_index: int | None = None, time_index: int | None = None
 ) -> TargetIndex:
+    """Define the properties of the target axis to subset based on the provided
+    index.
+
+    Args:
+        channel_index (int | None, optional): If not None, the frequency channel to extract. Defaults to None.
+        time_index (int | None, optional): If not None, the timestep to extract. Defaults to None.
+
+    Raises:
+        ValueError: If both channel and item indices are supplied
+        ValueError: If neither channel nor time index are set
+
+    Returns:
+        TargetIndex: Specified properties of target axis to subset
+    """
     if time_index and channel_index:
         msg = "Both time and channel index are set. Not allowed."
         raise ValueError(msg)
@@ -173,22 +187,33 @@ def extract_beam_from_beam_table(fits_path: Path, index: int) -> Beam:
     return beams[index]
 
 
-def find_target_axis(header: fits.header.Header) -> TargetWCS:
+def find_target_axis(
+    header: fits.header.Header, target_index: TargetIndex | str = "FREQ"
+) -> TargetWCS:
     """Attempt to find the axies of the target dimension in the data
     cube that corresponds to the target type (e.g. time or frequency).
 
     Args:
         header (fits.header.Header): The header from the fits cube
+        target_index (TargetIndex | str): The name of axus to search for in the FITS header representing the axis to extract from. Defaults to FREQ.
 
     Returns:
         TargetWCS: The information in the FITS header describing the target dimension of the cube
     """
 
+    axis_name = "FREQ"
+    if isinstance(target_index, str):
+        axis_name = target_index
+    elif isinstance(target_index, TargetIndex):
+        axis_name = target_index.axis_name
+
+    logger.info(f"Searching for {axis_name=} in header")
+
     naxis = header["NAXIS"]
     # Remember that range upper limit is exclusive, and
     # we start counting from 1
-    for axis in range(1, naxis + 2):
-        if "FREQ" in header[f"CTYPE{axis}"]:
+    for axis in range(1, naxis + 1):
+        if axis_name in header[f"CTYPE{axis}"]:
             logger.info(f"Found FREQ at {axis=}")
             return TargetWCS(
                 axis=axis,
@@ -320,20 +345,22 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     logger.info("Extracted header and data")
 
     logger.info(f"Data shape: {data.shape}")
-    freq_axis_wcs = find_target_axis(header=header)
-    freq_cube_index = len(data.shape) - freq_axis_wcs.axis
+    target_axis_wcs = find_target_axis(header=header, target_index=target_index)
+    target_cube_index = len(data.shape) - target_axis_wcs.axis
 
-    if extract_options.channel_index > data.shape[freq_axis_wcs.axis] - 1:
+    if extract_options.channel_index > data.shape[target_axis_wcs.axis] - 1:
         msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}"
         raise ChannelMissingException(msg)
 
     # Get the channel index requested
-    freq_plane_data = np.take(data, extract_options.channel_index, axis=freq_cube_index)
+    freq_plane_data = np.take(
+        data, extract_options.channel_index, axis=target_cube_index
+    )
     # and pad it back so dimensions match
-    freq_plane_data = np.expand_dims(freq_plane_data, axis=freq_cube_index)
+    freq_plane_data = np.expand_dims(freq_plane_data, axis=target_cube_index)
     freq_plane_header = update_header_for_target_axis(
         header=header,
-        target_wcs=freq_axis_wcs,
+        target_wcs=target_axis_wcs,
         target_index=target_index,
         extract_beam_from_file=fits_cube
         if fits_file_contains_beam_table(header)  # replace with "BEAMS" in opened fits?

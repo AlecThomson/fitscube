@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.exceptions import ChannelMissingException
+from fitscube.exceptions import ChannelMissingException, TargetAxisMissingException
 from fitscube.extract import (
     ExtractOptions,
     TargetIndex,
@@ -213,4 +213,20 @@ def test_compare_extracted_to_image_bad_channel(cube_path, tmpdir) -> None:
         hdu_index=0, channel_index=channel, output_path=output_file
     )
     with pytest.raises(ChannelMissingException):
+        extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)
+
+
+def test_extract_time_from_freq(cube_path, tmpdir) -> None:
+    """Attempt to extract a timestep from a cube without TIME. Should
+    raise an error
+    """
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    timestep = 0
+
+    extract_options = ExtractOptions(
+        hdu_index=0, time_index=timestep, output_path=output_file
+    )
+
+    with pytest.raises(TargetAxisMissingException):
         extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)
