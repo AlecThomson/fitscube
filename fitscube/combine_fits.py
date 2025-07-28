@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import warnings
 from io import BufferedRandom
 from pathlib import Path
 from typing import (
@@ -23,6 +24,7 @@ from typing import (
 import astropy.units as u
 import numpy as np
 from astropy.io import fits
+from astropy.io.fits.verify import VerifyWarning
 from astropy.table import Table
 from astropy.time import Time
 from astropy.wcs import WCS
@@ -43,6 +45,9 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
+
+warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
+warnings.filterwarnings("ignore", category=VerifyWarning)
 
 
 class InitResult(NamedTuple):
@@ -482,6 +487,7 @@ def parse_beams(
             beam = Beam.from_fits_header(header)
         except NoBeamException:
             beam = Beam(major=np.nan * u.deg, minor=np.nan * u.deg, pa=np.nan * u.deg)
+        logger.debug(f"{image.name=} {beam=}")
         beam_list.append(beam)
 
     return Beams(
@@ -622,7 +628,18 @@ async def combine_fits_coro(
         msg = f"Found beam in {file_list[0]} - assuming all files have beams"
         logger.info(msg)
         beams = parse_beams(file_list)
-        single_beam = np.allclose(beams[0], beams)
+        for beam in beams:
+            logger.info(f"{beams[0]==beam=}")
+
+        # Be sure to match on beam shape, not on area as a
+        # beam[0] == beam[1] would be checking.
+        same_beam = (
+            np.isclose(beams[0].major, beams.major)
+            & np.isclose(beams[0].minor, beams.minor)
+            & np.isclose(beams[0].pa, beams.pa)
+        )
+        single_beam = np.all(same_beam)
+
         if single_beam:
             logger.info("All beams are the same")
     else:
@@ -696,9 +713,12 @@ async def combine_fits_coro(
 combine_fits = sync_wrapper(combine_fits_coro)
 
 
-def cli() -> None:
+def get_parser(
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.ArgumentParser:
     """Command-line interface."""
-    parser = argparse.ArgumentParser(description=__doc__)
+
+    parser = parser if parser else argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "file_list",
         nargs="+",
@@ -752,7 +772,14 @@ def cli() -> None:
         default=None,
         help="Maximum number of workers to use for concurrent processing",
     )
-    args = parser.parse_args()
+
+    return parser
+
+
+def cli(args: argparse.Namespace | None = None) -> None:
+    if args is None:
+        parser = get_parser()
+        args = parser.parse_args()
 
     set_verbosity(
         verbosity=args.verbosity,
