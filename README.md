@@ -61,11 +61,11 @@ pip install fitscube
 
 Or, install from this git repo (latest):
 
-```bash
+```
 pip install git+https://github.com/AlecThomson/fitscube.git
 ```
 
-To install and use the (uvloop)[https://github.com/MagicStack/uvloop] Async
+To install and use the [uvloop](https://github.com/MagicStack/uvloop) Async
 runner do:
 
 ```
@@ -78,10 +78,23 @@ Command line:
 
 ```
 ❯ fitscube -h
-usage: fitscube [-h] [-o] [--create-blanks] [--time-domain] [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v] [--max-workers MAX_WORKERS] file_list [file_list ...] out_cube
+usage: fitscube [-h] {combine,extract} ...
 
-Fitscube: Combine single-frequency FITS files into a cube. Assumes: - All files have the same WCS - All files have the same shape / pixel grid - All the relevant information is in the first header of the first image - Frequency is either a WCS axis or in the REFFREQ header keyword OR - Time is
-present in the DATE-OBS header keyword for time-domain-mode
+Tooling to create fitscubes
+
+positional arguments:
+  {combine,extract}
+    combine          Combine FITS images together into a cube
+    extract          Extract a plane from an existing cube
+
+options:
+  -h, --help         show this help message and exit
+```
+
+```
+❯ fitscube combine -h
+usage: fitscube combine [-h] [-o] [--create-blanks] [--time-domain] [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v] [--max-workers MAX_WORKERS]
+                        file_list [file_list ...] out_cube
 
 positional arguments:
   file_list             List of FITS files to combine (in frequency or time order)
@@ -100,6 +113,25 @@ options:
   -v, --verbosity       Increase output verbosity
   --max-workers MAX_WORKERS
                         Maximum number of workers to use for concurrent processing
+```
+
+```
+❯ fitscube extract -h
+usage: fitscube extract [-h] [--channel-index CHANNEL_INDEX] [--hdu-index HDU_INDEX] [-v] [--overwrite] [--output-path OUTPUT_PATH] fits_cube
+
+positional arguments:
+  fits_cube             The cube to extract a plane from
+
+options:
+  -h, --help            show this help message and exit
+  --channel-index CHANNEL_INDEX
+                        The channel to extract
+  --hdu-index HDU_INDEX
+                        The HDU index of the data card containing the cube data
+  -v, --verbosity       Increase output verbosity
+  --overwrite           overwrite the output file, if it exists.
+  --output-path OUTPUT_PATH
+                        The name of the new output file. If not specified it is generated from the fits cube name
 ```
 
 Python:
