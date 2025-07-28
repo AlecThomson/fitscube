@@ -713,7 +713,9 @@ async def combine_fits_coro(
 combine_fits = sync_wrapper(combine_fits_coro)
 
 
-def get_parser(parser: argparse.ArgumentParser | None = None) -> None:
+def get_parser(
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.ArgumentParser:
     """Command-line interface."""
 
     parser = parser if parser else argparse.ArgumentParser(description=__doc__)
