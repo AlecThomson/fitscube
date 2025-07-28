@@ -348,7 +348,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     target_axis_wcs = find_target_axis(header=header, target_index=target_index)
     target_cube_index = len(data.shape) - target_axis_wcs.axis
 
-    if extract_options.channel_index > data.shape[target_axis_wcs.axis] - 1:
+    if target_index.axis_index > data.shape[target_axis_wcs.axis] - 1:
         msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}"
         raise ChannelMissingException(msg)
 
