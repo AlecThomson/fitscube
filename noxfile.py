@@ -11,7 +11,7 @@ import nox
 DIR = Path(__file__).parent.resolve()
 
 nox.needs_version = ">=2024.3.2"
-nox.options.sessions = ["lint", "pylint", "tests"]
+nox.options.sessions = ["lint", "tests"]
 nox.options.default_venv_backend = "uv|virtualenv"
 
 
@@ -21,22 +21,6 @@ def lint(session: nox.Session) -> None:
     session.install("pre-commit")
     session.run(
         "pre-commit", "run", "--all-files", "--show-diff-on-failure", *session.posargs
-    )
-
-
-@nox.session
-def pylint(session: nox.Session) -> None:
-    """Run PyLint."""
-    # This needs to be installed into the package environment, and is slower
-    # than a pre-commit check
-    session.install(".", "pylint>=3.2")
-    session.run(
-        "pylint",
-        "--ignored-classes=astropy.units,astropy.io.fits.hdu.hdulist.HDUList",
-        "--ignored-modules=radio_beam",
-        "-d duplicate-code",
-        "fitscube",
-        *session.posargs,
     )
 
 
