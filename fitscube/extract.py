@@ -353,9 +353,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
         raise ChannelMissingException(msg)
 
     # Get the channel index requested
-    freq_plane_data = np.take(
-        data, extract_options.channel_index, axis=target_cube_index
-    )
+    freq_plane_data = np.take(data, target_index.target_index, axis=target_cube_index)
     # and pad it back so dimensions match
     freq_plane_data = np.expand_dims(freq_plane_data, axis=target_cube_index)
     freq_plane_header = update_header_for_target_axis(
