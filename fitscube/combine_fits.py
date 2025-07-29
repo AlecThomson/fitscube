@@ -287,8 +287,8 @@ async def create_output_cube_coro(
         # the FITS header can encoude the times as regular steps.
         diff_time = np.diff(sorted_specs)
         diff_diff_time = np.diff(diff_time)
-        deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
-        even_spec = np.max(deviation_from_zero) < (np.mean(diff_time) * 0.02)
+        running_deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
+        even_spec = np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
 
         # This is a simpler way where no attempt is made to ensure the total
         # error on the irregular steps accumulates and violates the regular
@@ -297,13 +297,13 @@ async def create_output_cube_coro(
     else:
         even_spec = np.diff(sorted_specs).std() < (1e-4 * unit)
 
-    logger.info(f"{np.diff(sorted_specs).std()=}")
+    logger.debug(f"{np.diff(sorted_specs).std()=}")
     if not even_spec:
         spequency = "Times" if time_domain_mode else "Frequencies"
         msg = f"{spequency} are not evenly spaced"
         logger.warning(msg)
-        logger.info(f"{np.max(np.diff(sorted_specs))=}")
-        logger.info(f"{np.min(np.diff(sorted_specs))=}")
+        logger.debug(f"{np.max(np.diff(sorted_specs))=}")
+        logger.debug(f"{np.min(np.diff(sorted_specs))=}")
 
     n_chan = len(specs)
 
