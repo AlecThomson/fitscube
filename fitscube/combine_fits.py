@@ -275,11 +275,35 @@ async def create_output_cube_coro(
     ctype = "TIME" if time_domain_mode else "FREQ"
 
     old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
-    even_spec = np.diff(specs).std() < (1e-4 * unit)
+    sorted_specs = np.sort(specs)
+    if time_domain_mode:
+        logger.info("Computing time-differences")
+
+        # This attempts to constrain the deviation away from 'asbolute' time
+        # as far as it can be. Some time steps can be positive or negative,
+        # but so long as the assumulated total is close to 0 then we can say
+        # it is close. This approach is catering to some strangeness in
+        # ASKAP data. If the accumulated error ir small enough we can assume
+        # the FITS header can encoude the times as regular steps.
+        diff_time = np.diff(sorted_specs)
+        diff_diff_time = np.diff(diff_time)
+        deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
+        even_spec = np.max(deviation_from_zero) < (np.mean(diff_time) * 0.02)
+
+        # This is a simpler way where no attempt is made to ensure the total
+        # error on the irregular steps accumulates and violates the regular
+        # spacing we can encode in the fits header.
+        # even_spec = np.all(np.abs(np.diff(np.diff(sorted_specs))) < (0.1*u.s))
+    else:
+        even_spec = np.diff(sorted_specs).std() < (1e-4 * unit)
+
+    logger.info(f"{np.diff(sorted_specs).std()=}")
     if not even_spec:
         spequency = "Times" if time_domain_mode else "Frequencies"
         msg = f"{spequency} are not evenly spaced"
         logger.warning(msg)
+        logger.info(f"{np.max(np.diff(sorted_specs))=}")
+        logger.info(f"{np.min(np.diff(sorted_specs))=}")
 
     n_chan = len(specs)
 
@@ -314,10 +338,14 @@ async def create_output_cube_coro(
     _no_of_naxis = [k for k in new_header if k.startswith("NAXIS") and k != "NAXIS"]
     new_header["NAXIS"] = len(_no_of_naxis)
 
-    for k in new_header:
-        logger.info(f"{k}={new_header[k]}")
+    for k in ["CTYPE", "CUNIT", "CDELT"]:
+        key = f"{k}{fits_idx}"
+        logger.info(f"{key}={new_header[key]}")
 
     if ignore_spec or not even_spec:
+        logger.info(
+            f"Ignore the specrency information, {ignore_spec=} or {not even_spec=}"
+        )
         new_header[f"CDELT{fits_idx}"] = 1
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
