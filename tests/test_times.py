@@ -127,7 +127,7 @@ def test_uneven_combine(
             continue
         assert np.allclose(plane, image)
 
-
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
 def test_wsclean_images_create_axis(time_image_paths, tmpdir) -> None:
     """Ensure that the combined cube conforms to the input data"""
 
@@ -143,7 +143,7 @@ def test_wsclean_images_create_axis(time_image_paths, tmpdir) -> None:
     )
 
     cube_data = fits.getdata(out_cube)
-    for i, time_image_path in time_image_paths:
+    for i, time_image_path in enumerate(time_image_paths):
         image_data = fits.getdata(time_image_path)
         # The TIME axis will be appended as a new dimension
         cube_image_data = cube_data[i]
