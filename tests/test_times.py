@@ -126,3 +126,25 @@ def test_uneven_combine(
             assert chan in (1, 2)
             continue
         assert np.allclose(plane, image)
+
+
+def test_wsclean_images_create_axis(time_image_paths, tmpdir) -> None:
+    """Ensure that the combined cube conforms to the input data"""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    combine_fits(
+        file_list=time_image_paths,
+        out_cube=out_cube,
+        overwrite=True,
+        time_domain_mode=True,
+    )
+
+    cube_data = fits.getdata(out_cube)
+    for i, time_image_path in time_image_paths:
+        image_data = fits.getdata(time_image_path)
+        # The TIME axis will be appended as a new dimension
+        cube_image_data = cube_data[i]
+        assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())

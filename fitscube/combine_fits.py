@@ -148,6 +148,26 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     return SpequencyInfo(new_specs * specs.unit, missing_chan_idx)
 
 
+def make_output_shape_from_header(output_header: fits.Header) -> list[int]:
+    """Construct the output datga shape from the information in the output
+    header
+
+    Args:
+        output_header (fits.Header): The header to base the output data shape from
+
+    Returns:
+        list[int]: The shape of the data to be written out
+    """
+    shape = []
+    for i in range(1, 99):
+        try:
+            shape.append(output_header[f"NAXIS{i}"])
+        except KeyError:
+            continue
+
+    return shape[::-1]
+
+
 async def create_cube_from_scratch_coro(
     output_file: Path,
     output_header: fits.Header,
@@ -162,6 +182,7 @@ async def create_cube_from_scratch_coro(
 
     output_wcs = WCS(output_header)
     output_shape = output_wcs.array_shape
+    # output_shape = make_output_shape_from_header(output_header=output_header)
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
     # If the output shape is less than 1801, we can create a blank array
@@ -191,6 +212,7 @@ async def create_cube_from_scratch_coro(
 
     for key, value in output_header.items():
         header[key] = value
+        logger.info(f"{key}={value}")
 
     header.tofile(output_file, overwrite=overwrite)
 
@@ -281,13 +303,21 @@ async def create_output_cube_coro(
             # raise ValueError(msg) from e
 
     new_header = old_header.copy()
-    new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
     new_header[f"NAXIS{fits_idx}"] = n_chan
     new_header[f"CRPIX{fits_idx}"] = 1
     new_header[f"CRVAL{fits_idx}"] = specs[0].value
     new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
     new_header[f"CTYPE{fits_idx}"] = ctype
+
+    # Figure out the correct number of dimensions to use
+    total_dims = 1
+    for i in range(1, 99):
+        if f"NAXIS{i}" in new_header:
+            total_dims = i
+            continue
+        break
+    new_header["NAXIS"] = total_dims
 
     for k in new_header:
         logger.info(f"{k}={new_header[k]}")
