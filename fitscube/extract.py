@@ -22,9 +22,9 @@ class ExtractOptions:
     hdu_index: int = 0
     """The HDU in the fits cube to access (e.g. for header and data)"""
     channel_index: int | None = None
-    """The channel of the cube to extract. Defaultys to None"""
+    """The channel of the cube to extract. Defaults to None"""
     time_index: int | None = None
-    """The timestep of the cube to extract. Defaultys to None"""
+    """The timestep of the cube to extract. Defaults to None"""
     overwrite: bool = False
     """overwrite the output file, if it exists"""
     output_path: Path | None = None
@@ -33,7 +33,7 @@ class ExtractOptions:
 
 @dataclass
 class TargetWCS:
-    """Exxtract of target information in the WCS taken straight from
+    """Extract of target information in the WCS taken straight from
     the fits header."""
 
     axis: int
@@ -79,7 +79,7 @@ def create_target_index(
     Returns:
         TargetIndex: Specified properties of target axis to subset
     """
-    if time_index and channel_index:
+    if time_index is not None and channel_index is not None:
         msg = "Both time and channel index are set. Not allowed."
         raise ValueError(msg)
 
@@ -91,7 +91,7 @@ def create_target_index(
         return TargetIndex(
             axis_name="FREQ", axis_index=channel_index, output_name="channel"
         )
-    msg = "Something went wrong, target index could not be formed"
+    msg = f"Something went wrong, target index could not be formed, {channel_index=} {time_index=}"
     raise ValueError(msg)
 
 
@@ -109,7 +109,10 @@ def _check_extract_mode(extract_options: ExtractOptions) -> None:
     if extract_options.channel_index is None and extract_options.time_index is None:
         msg = "Both channel index and time index are None. One needs to be set."
         raise ValueError(msg)
-    if extract_options.channel_index and extract_options.time_index:
+    if (
+        extract_options.channel_index is not None
+        and extract_options.time_index is not None
+    ):
         msg = "Both channel index and time index are set. Only one may be set. "
         raise ValueError(msg)
 
@@ -318,7 +321,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     # Initial sanity check of the axis to extract
     _check_extract_mode(extract_options=extract_options)
 
-    target_index: TargetIndex = create_target_index(
+    target_index = create_target_index(
         channel_index=extract_options.channel_index,
         time_index=extract_options.time_index,
     )

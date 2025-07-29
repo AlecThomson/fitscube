@@ -271,12 +271,14 @@ async def create_output_cube_coro(
         try:
             idx = wcs.axis_type_names[::-1].index(ctype)
 
-        except ValueError as e:
-            msg = f"No {ctype} axis found in WCS."
+            fits_idx = wcs.axis_type_names.index(ctype) + 1
+            logger.info(f"{ctype} axis found at index %s (NAXIS%s)", idx, fits_idx)
 
-            raise ValueError(msg) from e
-        fits_idx = wcs.axis_type_names.index(ctype) + 1
-        logger.info(f"{ctype} axis found at index %s (NAXIS%s)", idx, fits_idx)
+        except ValueError:
+            msg = f"No {ctype} axis found in WCS."
+            logger.info(msg)
+            fits_idx = len(old_data.shape) + 1
+            # raise ValueError(msg) from e
 
     new_header = old_header.copy()
     new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
@@ -286,6 +288,9 @@ async def create_output_cube_coro(
     new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
     new_header[f"CTYPE{fits_idx}"] = ctype
+
+    for k in new_header:
+        logger.info(f"{k}={new_header[k]}")
 
     if ignore_spec or not even_spec:
         new_header[f"CDELT{fits_idx}"] = 1
