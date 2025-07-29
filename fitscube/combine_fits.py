@@ -311,13 +311,8 @@ async def create_output_cube_coro(
     new_header[f"CTYPE{fits_idx}"] = ctype
 
     # Figure out the correct number of dimensions to use
-    total_dims = 1
-    for i in range(1, 99):
-        if f"NAXIS{i}" in new_header:
-            total_dims = i
-            continue
-        break
-    new_header["NAXIS"] = total_dims
+    _no_of_naxis = [k for k in new_header if k.startswith("NAXIS") and k != "NAXIS"]
+    new_header["NAXIS"] = len(_no_of_naxis)
 
     for k in new_header:
         logger.info(f"{k}={new_header[k]}")
