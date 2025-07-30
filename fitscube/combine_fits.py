@@ -148,26 +148,6 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     return SpequencyInfo(new_specs * specs.unit, missing_chan_idx)
 
 
-def make_output_shape_from_header(output_header: fits.Header) -> list[int]:
-    """Construct the output datga shape from the information in the output
-    header
-
-    Args:
-        output_header (fits.Header): The header to base the output data shape from
-
-    Returns:
-        list[int]: The shape of the data to be written out
-    """
-    shape = []
-    for i in range(1, 99):
-        try:
-            shape.append(output_header[f"NAXIS{i}"])
-        except KeyError:
-            continue
-
-    return shape[::-1]
-
-
 async def create_cube_from_scratch_coro(
     output_file: Path,
     output_header: fits.Header,
@@ -182,7 +162,6 @@ async def create_cube_from_scratch_coro(
 
     output_wcs = WCS(output_header)
     output_shape = output_wcs.array_shape
-    # output_shape = make_output_shape_from_header(output_header=output_header)
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
     # If the output shape is less than 1801, we can create a blank array
@@ -212,7 +191,7 @@ async def create_cube_from_scratch_coro(
 
     for key, value in output_header.items():
         header[key] = value
-        logger.info(f"{key}={value}")
+        logger.debug(f"{key}={value}")
 
     header.tofile(output_file, overwrite=overwrite)
 
@@ -322,13 +301,12 @@ async def create_output_cube_coro(
             idx = wcs.axis_type_names[::-1].index(ctype)
 
             fits_idx = wcs.axis_type_names.index(ctype) + 1
-            logger.info(f"{ctype} axis found at index %s (NAXIS%s)", idx, fits_idx)
+            logger.info(f"{ctype} axis found at index {idx} (NAXIS{fits_idx})")
 
         except ValueError:
-            msg = f"No {ctype} axis found in WCS."
+            msg = f"No {ctype} axis not found in WCS."
             logger.info(msg)
             fits_idx = len(old_data.shape) + 1
-            # raise ValueError(msg) from e
 
     new_header = old_header.copy()
     new_header[f"NAXIS{fits_idx}"] = n_chan
@@ -344,7 +322,7 @@ async def create_output_cube_coro(
 
     for k in ["CTYPE", "CUNIT", "CDELT"]:
         key = f"{k}{fits_idx}"
-        logger.info(f"{key}={new_header[key]}")
+        logger.debug(f"{key}={new_header[key]}")
 
     if ignore_spec or not even_spec:
         logger.info(
