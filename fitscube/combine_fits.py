@@ -293,7 +293,7 @@ async def create_output_cube_coro(
         # This is a simpler way where no attempt is made to ensure the total
         # error on the irregular steps accumulates and violates the regular
         # spacing we can encode in the fits header.
-        # even_spec = np.all(np.abs(np.diff(np.diff(sorted_specs))) < (0.1*u.s))
+        # even_spec = np.all(np.abs(np.diff(np.diff(sorted_specs))) < (0.15*u.s))
     else:
         even_spec = np.diff(sorted_specs).std() < (1e-4 * unit)
 
