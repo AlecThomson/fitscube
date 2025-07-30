@@ -7,27 +7,74 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.exceptions import ChannelMissingException
+from fitscube.exceptions import ChannelMissingException, TargetAxisMissingException
 from fitscube.extract import (
     ExtractOptions,
-    create_plane_freq_wcs,
+    TargetIndex,
+    _check_extract_mode,
+    create_plane_target_wcs,
+    create_target_index,
     extract_plane_from_cube,
-    find_freq_axis,
+    find_target_axis,
     fits_file_contains_beam_table,
     get_output_path,
-    update_header_for_frequency,
+    update_header_for_target_axis,
 )
+
+
+def test_target_index() -> None:
+    """Simple test of the target container"""
+    target_index = create_target_index(channel_index=2)
+    assert isinstance(target_index, TargetIndex)
+    assert target_index.axis_name == "FREQ"
+    assert target_index.axis_index == 2
+
+    target_index = create_target_index(time_index=20)
+    assert isinstance(target_index, TargetIndex)
+    assert target_index.axis_name == "TIME"
+    assert target_index.axis_index == 20
+
+    # int of 0 is False
+    target_index = create_target_index(time_index=0)
+    assert isinstance(target_index, TargetIndex)
+    assert target_index.axis_name == "TIME"
+    assert target_index.axis_index == 0
+
+    with pytest.raises(ValueError, match="index"):
+        create_target_index()
+
+    with pytest.raises(ValueError, match="index"):
+        create_target_index(channel_index=2, time_index=4)
+
+
+def test_check_mode_for_consistency() -> None:
+    """See if the basic consistency checks for the extraction mode makes sense"""
+    extract_options = ExtractOptions()
+    with pytest.raises(ValueError, match="index"):
+        _check_extract_mode(extract_options=extract_options)
+
+    extract_options = ExtractOptions(channel_index=3, time_index=4)
+    with pytest.raises(ValueError, match="index"):
+        _check_extract_mode(extract_options=extract_options)
 
 
 def test_get_output_path() -> None:
     """Make sure the output path generated is correct"""
 
+    target_index = create_target_index(channel_index=10)
     in_fits = Path("some.example.cube.fits")
-    channel_index = 10
     expected_fits = Path("some.example.cube.channel-10.fits")
 
     assert expected_fits == get_output_path(
-        input_path=in_fits, channel_index=channel_index
+        input_path=in_fits, target_index=target_index
+    )
+
+    target_index = create_target_index(time_index=10)
+    in_fits = Path("some.example.cube.fits")
+    expected_fits = Path("some.example.cube.timestep-10.fits")
+
+    assert expected_fits == get_output_path(
+        input_path=in_fits, target_index=target_index
     )
 
 
@@ -43,7 +90,7 @@ def test_find_freq_axis(example_header) -> None:
     """Find the components associated with frequency from the header"""
     header = fits.header.Header.fromstring(example_header)
 
-    freq_wcs = find_freq_axis(header=header)
+    freq_wcs = find_target_axis(header=header)
     assert freq_wcs.axis == 4
     assert freq_wcs.crpix == 1
     assert freq_wcs.crval == 801490740.740741
@@ -54,15 +101,15 @@ def test_create_plane_freq_wcs(example_header) -> None:
     """Update the freq wcs to indicate a plane"""
     header = fits.header.Header.fromstring(example_header)
 
-    freq_wcs = find_freq_axis(header=header)
-    plane_wcs = create_plane_freq_wcs(original_freq_wcs=freq_wcs, channel_index=1)
+    freq_wcs = find_target_axis(header=header)
+    plane_wcs = create_plane_target_wcs(original_freq_wcs=freq_wcs, target_index=1)
 
     assert plane_wcs.axis == freq_wcs.axis
     assert plane_wcs.crpix == 1
     assert plane_wcs.crval == 805490740.740741
     assert plane_wcs.cdelt == freq_wcs.cdelt
 
-    plane_wcs = create_plane_freq_wcs(original_freq_wcs=freq_wcs, channel_index=0)
+    plane_wcs = create_plane_target_wcs(original_freq_wcs=freq_wcs, target_index=0)
 
     assert plane_wcs.axis == freq_wcs.axis
     assert plane_wcs.crpix == 1
@@ -76,10 +123,10 @@ def test_update_header_for_frequency(example_header) -> None:
 
     header = fits.header.Header.fromstring(example_header)
 
-    freq_wcs = find_freq_axis(header=header)
-
-    new_header = update_header_for_frequency(
-        header=header, freq_wcs=freq_wcs, channel_index=1
+    freq_wcs = find_target_axis(header=header)
+    target_index = create_target_index(channel_index=1)
+    new_header = update_header_for_target_axis(
+        header=header, target_wcs=freq_wcs, target_index=target_index
     )
     assert new_header["CRPIX4"] == 1
     assert new_header["CRVAL4"] == 805490740.740741
@@ -167,3 +214,37 @@ def test_compare_extracted_to_image_bad_channel(cube_path, tmpdir) -> None:
     )
     with pytest.raises(ChannelMissingException):
         extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)
+
+
+def test_extract_time_from_freq(cube_path, tmpdir) -> None:
+    """Attempt to extract a timestep from a cube without TIME. Should
+    raise an error
+    """
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    timestep = 0
+
+    extract_options = ExtractOptions(
+        hdu_index=0, time_index=timestep, output_path=output_file
+    )
+
+    with pytest.raises(TargetAxisMissingException):
+        extract_plane_from_cube(fits_cube=cube_path, extract_options=extract_options)
+
+
+def test_extract_time_cube(timecube_path, tmpdir) -> None:
+    """Attempt to extract a timestep from a cube without TIME. Should
+    raise an error
+    """
+    output_file = Path(tmpdir) / "extract" / "test.fits"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    timestep = 200
+
+    extract_options = ExtractOptions(
+        hdu_index=0, time_index=timestep, output_path=output_file
+    )
+
+    timecube = extract_plane_from_cube(
+        fits_cube=timecube_path, extract_options=extract_options
+    )
+    assert timecube.exists()

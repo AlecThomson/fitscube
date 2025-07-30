@@ -5,8 +5,8 @@ class FITSCubeException(Exception):
     """Base container for FITSCube exceptions"""
 
 
-class FREQMissingException(FITSCubeException):
-    """Missing FREQ axis in fits cube"""
+class TargetAxisMissingException(FITSCubeException):
+    """The target axis is missing in fits cube"""
 
 
 class ChannelMissingException(FITSCubeException):

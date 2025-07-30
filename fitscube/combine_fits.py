@@ -191,6 +191,7 @@ async def create_cube_from_scratch_coro(
 
     for key, value in output_header.items():
         header[key] = value
+        logger.debug(f"{key}={value}")
 
     header.tofile(output_file, overwrite=overwrite)
 
@@ -253,11 +254,39 @@ async def create_output_cube_coro(
     ctype = "TIME" if time_domain_mode else "FREQ"
 
     old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
-    even_spec = np.diff(specs).std() < (1e-4 * unit)
+    sorted_specs = np.sort(specs)
+    if time_domain_mode:
+        logger.info("Computing time-differences")
+
+        # This attempts to constrain the deviation away from 'asbolute' time
+        # as far as it can be. If some time steps are not regularly space
+        # (differencce between the time of adjacent scans) can be positive or negative,
+        # but so long as the assumulated total is close to 0 then we can say
+        # it is close. This approach is catering to some strangeness in
+        # ASKAP data. If the accumulated error is small enough we can assume
+        # the FITS header can encoude the times as regular steps.
+        diff_time = np.diff(sorted_specs)
+        diff_diff_time = np.diff(diff_time)
+        running_deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
+        even_spec = np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
+
+        # This is a simpler way where no attempt is made to ensure the total
+        # error on the irregular steps accumulates and violates the regular
+        # spacing we can encode in the fits header. I am less trustworthy of this,
+        # if all deviations are negative they would accumulate. Individually
+        # they may not fail but across the whole TIME dimension, as encoded by the
+        # C-type header fields that define a regularly spaced interval, may.
+        # even_spec = np.all(np.abs(np.diff(np.diff(sorted_specs))) < (0.15*u.s))
+    else:
+        even_spec = np.diff(sorted_specs).std() < (1e-4 * unit)
+
+    logger.debug(f"{np.diff(sorted_specs).std()=}")
     if not even_spec:
         spequency = "Times" if time_domain_mode else "Frequencies"
         msg = f"{spequency} are not evenly spaced"
         logger.warning(msg)
+        logger.debug(f"{np.max(np.diff(sorted_specs))=}")
+        logger.debug(f"{np.min(np.diff(sorted_specs))=}")
 
     n_chan = len(specs)
 
@@ -271,15 +300,15 @@ async def create_output_cube_coro(
         try:
             idx = wcs.axis_type_names[::-1].index(ctype)
 
-        except ValueError as e:
-            msg = f"No {ctype} axis found in WCS."
+            fits_idx = wcs.axis_type_names.index(ctype) + 1
+            logger.info(f"{ctype} axis found at index {idx} (NAXIS{fits_idx})")
 
-            raise ValueError(msg) from e
-        fits_idx = wcs.axis_type_names.index(ctype) + 1
-        logger.info(f"{ctype} axis found at index %s (NAXIS%s)", idx, fits_idx)
+        except ValueError:
+            msg = f"No {ctype} axis not found in WCS."
+            logger.info(msg)
+            fits_idx = len(old_data.shape) + 1
 
     new_header = old_header.copy()
-    new_header["NAXIS"] = 3 if is_2d else len(old_data.shape)
     new_header[f"NAXIS{fits_idx}"] = n_chan
     new_header[f"CRPIX{fits_idx}"] = 1
     new_header[f"CRVAL{fits_idx}"] = specs[0].value
@@ -287,7 +316,18 @@ async def create_output_cube_coro(
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
     new_header[f"CTYPE{fits_idx}"] = ctype
 
+    # Figure out the correct number of dimensions to use
+    _no_of_naxis = [k for k in new_header if k.startswith("NAXIS") and k != "NAXIS"]
+    new_header["NAXIS"] = len(_no_of_naxis)
+
+    for k in ["CTYPE", "CUNIT", "CDELT"]:
+        key = f"{k}{fits_idx}"
+        logger.debug(f"{key}={new_header[key]}")
+
     if ignore_spec or not even_spec:
+        logger.info(
+            f"Ignore the specrency information, {ignore_spec=} or {not even_spec=}"
+        )
         new_header[f"CDELT{fits_idx}"] = 1
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
@@ -393,6 +433,7 @@ async def parse_specs_coro(
         spec_file (str | None, optional): File containing frequencies/times. Defaults to None.
         spec_list (list[float] | None, optional): List of frequencies/times. Defaults to None.
         ignore_spec (bool | None, optional): Ignore frequency/time information. Defaults to False.
+        time_domain_mode (bool, optional): Whether these cubes dhould be formed over the time axis. Defaults to False.
 
     Raises:
         ValueError: If both spec_file and spec_list are specified

@@ -22,6 +22,16 @@ def headers() -> dict[str, str]:
 
 
 @pytest.fixture
+def timecube_path(tmpdir) -> Path:
+    tmp_dir = Path(tmpdir) / "timecube"
+    tmp_dir.mkdir(exist_ok=True, parents=True)
+    cube_zip = Path(__file__).parent / "data" / "timecube.zip"
+
+    unpack_archive(cube_zip, tmp_dir)
+    return tmp_dir / "test_timecube.fits"
+
+
+@pytest.fixture
 def cube_path(tmpdir) -> Path:
     tmp_dir = Path(tmpdir) / "cube"
     tmp_dir.mkdir(exist_ok=True, parents=True)
@@ -36,6 +46,19 @@ def image_paths(tmpdir) -> list[Path]:
     tmp_dir = Path(tmpdir) / "images"
     tmp_dir.mkdir(exist_ok=True, parents=True)
     images_zip = Path(__file__).parent / "data" / "images.zip"
+
+    unpack_archive(images_zip, tmp_dir)
+    image_paths = list(tmp_dir.glob("*fits"))
+    image_paths.sort()
+
+    return image_paths
+
+
+@pytest.fixture
+def time_image_paths(tmpdir) -> list[Path]:
+    tmp_dir = Path(tmpdir) / "time_images"
+    tmp_dir.mkdir(exist_ok=True, parents=True)
+    images_zip = Path(__file__).parent / "data" / "time_images.zip"
 
     unpack_archive(images_zip, tmp_dir)
     image_paths = list(tmp_dir.glob("*fits"))
