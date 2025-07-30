@@ -280,10 +280,11 @@ async def create_output_cube_coro(
         logger.info("Computing time-differences")
 
         # This attempts to constrain the deviation away from 'asbolute' time
-        # as far as it can be. Some time steps can be positive or negative,
+        # as far as it can be. If some time steps are not regularly space
+        # (differencce between the time of adjacent scans) can be positive or negative,
         # but so long as the assumulated total is close to 0 then we can say
         # it is close. This approach is catering to some strangeness in
-        # ASKAP data. If the accumulated error ir small enough we can assume
+        # ASKAP data. If the accumulated error is small enough we can assume
         # the FITS header can encoude the times as regular steps.
         diff_time = np.diff(sorted_specs)
         diff_diff_time = np.diff(diff_time)
@@ -292,7 +293,10 @@ async def create_output_cube_coro(
 
         # This is a simpler way where no attempt is made to ensure the total
         # error on the irregular steps accumulates and violates the regular
-        # spacing we can encode in the fits header.
+        # spacing we can encode in the fits header. I am less trustworthy of this,
+        # if all deviations are negative they would accumulate. Individually
+        # they may not fail but across the whole TIME dimension, as encoded by the
+        # C-type header fields that define a regularly spaced interval, may.
         # even_spec = np.all(np.abs(np.diff(np.diff(sorted_specs))) < (0.15*u.s))
     else:
         even_spec = np.diff(sorted_specs).std() < (1e-4 * unit)
