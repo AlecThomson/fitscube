@@ -324,6 +324,11 @@ async def create_output_cube_coro(
         key = f"{k}{fits_idx}"
         logger.debug(f"{key}={new_header[key]}")
 
+    if ("PV1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
+        logger.info("Inserting PV header")
+        new_header[f"PC{fits_idx}_1"] = 1.0
+        new_header[f"PC{fits_idx}_2"] = 0.0
+
     if ignore_spec or not even_spec:
         logger.info(
             f"Ignore the specrency information, {ignore_spec=} or {not even_spec=}"
