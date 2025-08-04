@@ -324,6 +324,7 @@ async def create_output_cube_coro(
         key = f"{k}{fits_idx}"
         logger.debug(f"{key}={new_header[key]}")
 
+    # Add extra transform fields for consistency
     if ("PV1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
         logger.info("Inserting PV fields into header")
         pv1 = f"PC{fits_idx}_1"
