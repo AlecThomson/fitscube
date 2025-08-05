@@ -361,9 +361,6 @@ async def create_output_cube_coro(
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
 
-    if time_domain_mode:
-        new_header["COMMENT"] = "The frequency/chan axis in this cube represents TIME."
-
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
     if is_2d:
