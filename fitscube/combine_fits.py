@@ -160,7 +160,13 @@ async def create_cube_from_scratch_coro(
     if output_file.exists() and overwrite:
         output_file.unlink()
 
-    output_wcs = WCS(output_header)
+    try:
+        output_wcs = WCS(output_header)
+    except Exception as e:
+        logger.critical("Error creating new header")
+        for k in output_header:
+            logger.critical(f"{k} = {output_header[k]}")
+        raise e
     output_shape = output_wcs.array_shape
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
