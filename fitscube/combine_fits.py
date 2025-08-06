@@ -34,6 +34,11 @@ from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
 
 from fitscube.asyncio import gather_with_limit, sync_wrapper
+from fitscube.bounding_box import (
+    BoundingBox,
+    extract_common_bounding_box,
+    get_bounding_box_for_fits_coro,
+)
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
 T = TypeVar("T")
@@ -170,6 +175,7 @@ async def create_cube_from_scratch_coro(
     output_shape = output_wcs.array_shape
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
+
     # If the output shape is less than 1801, we can create a blank array
     # in memory and write it to disk
     if np.prod(output_shape) < 1801:
@@ -240,6 +246,7 @@ async def create_output_cube_coro(
     single_beam: bool = False,
     overwrite: bool = False,
     time_domain_mode: bool = False,
+    bounding_box: BoundingBox | None = None,
 ) -> InitResult:
     """Initialize the data cube.
 
@@ -360,6 +367,14 @@ async def create_output_cube_coro(
             f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
+
+    if bounding_box:
+        logger.info("Updating CRPIX1 and CRPIX2 header values to reflect bounding box")
+        new_header["CRPIX1"] -= bounding_box.ymin
+        new_header["CRPIX2"] -= bounding_box.xmin
+        logger.info("Updating NAXIS1 and NAXIS2 ro reflect bounding box")
+        new_header["NAXIS1"] = bounding_box.y_span
+        new_header["NAXIS2"] = bounding_box.x_span
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
@@ -622,6 +637,8 @@ async def process_channel(
     old_channel: int,
     is_missing: bool,
     file_list: list[Path],
+    bounding_box: BoundingBox | None = None,
+    invalidate_zeros: bool = False,
 ) -> None:
     msg = f"Processing channel {new_channel}"
     logger.info(msg)
@@ -633,6 +650,15 @@ async def process_channel(
         plane = await asyncio.to_thread(
             fits.getdata, file_list[old_channel], memmap=False
         )
+
+    if bounding_box:
+        plane = plane[
+            ...,
+            bounding_box.xmin : bounding_box.xmax,
+            bounding_box.ymin : bounding_box.ymax,
+        ]
+    if invalidate_zeros:
+        plane[plane == 0.0] = np.nan
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
@@ -653,6 +679,7 @@ async def combine_fits_coro(
     overwrite: bool = False,
     max_workers: int | None = None,
     time_domain_mode: bool = False,
+    bounding_box: bool = False,
 ) -> u.Quantity:
     """Combine FITS files into a cube.
     Can handle either frequency or time dimensions agnostically
@@ -663,6 +690,7 @@ async def combine_fits_coro(
         ignore_spec (bool, optional): Ignore frequency/time information. Defaults to False.
         create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
+        bounding_box (bool, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input daata is needed, but output cube is smaller. Defaults to False.
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
@@ -707,6 +735,19 @@ async def combine_fits_coro(
     specs = specs[new_sort_idx]
     missing_chan_idx = missing_chan_idx[new_sort_idx]
 
+    # Get the bounding box, if requested
+    final_bounding_box = None
+    if bounding_box:
+        boxes_futures = [
+            get_bounding_box_for_fits_coro(fits_path=fits_path, invalidate_zeros=True)
+            for fits_path in file_list
+        ]
+        boxes = await gather_with_limit(
+            max_workers, *boxes_futures, desc="Bounding boxes"
+        )
+        final_bounding_box = extract_common_bounding_box(bounding_boxes=boxes)
+        logger.info(f"The final bounding box is: {final_bounding_box=}")
+
     # Initialize the data cube
     new_header, _, _, _ = await create_output_cube_coro(
         old_name=file_list[0],
@@ -717,6 +758,7 @@ async def combine_fits_coro(
         single_beam=single_beam,
         overwrite=overwrite,
         time_domain_mode=time_domain_mode,
+        bounding_box=final_bounding_box,
     )
 
     new_channels = np.arange(len(specs))
@@ -744,6 +786,8 @@ async def combine_fits_coro(
                 old_channel=old_channel,
                 is_missing=is_missing,
                 file_list=file_list,
+                bounding_box=final_bounding_box,
+                invalidate_zeros=True,
             )
             coros.append(coro)
 
@@ -826,6 +870,11 @@ def get_parser(
         default=None,
         help="Maximum number of workers to use for concurrent processing",
     )
+    parser.add_argument(
+        "--bounding-box",
+        action="store_true",
+        help="Attempt to consider padded images when creating the cube. Requires an extract read of the input data.",
+    )
 
     return parser
 
@@ -866,6 +915,7 @@ def cli(args: argparse.Namespace | None = None) -> None:
         overwrite=overwrite,
         max_workers=args.max_workers,
         time_domain_mode=time_domain_mode,
+        bounding_box=args.bounding_box,
     )
 
     spequency = "times" if time_domain_mode else "frequencies"

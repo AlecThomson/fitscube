@@ -3,6 +3,7 @@ bounding boxes to use in fitscube"""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,10 @@ class BoundingBox:
     """Maximum y pixel"""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
+    y_span: int
+    """The span between ymax and ymin"""
+    x_span: int
+    """The span between xmax and xmin"""
 
 
 def create_bound_box_plane(image_data: np.ndarray) -> BoundingBox | None:
@@ -57,8 +62,17 @@ def create_bound_box_plane(image_data: np.ndarray) -> BoundingBox | None:
     xmin, xmax = np.where(x_valid)[0][[0, -1]]
     ymin, ymax = np.where(y_valid)[0][[0, -1]]
 
+    y_span = ymax - ymin
+    x_span = xmax - xmin
+
     return BoundingBox(
-        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, original_shape=image_data.shape[-2:]
+        xmin=xmin,
+        xmax=xmax,
+        ymin=ymin,
+        ymax=ymax,
+        y_span=y_span,
+        x_span=x_span,
+        original_shape=image_data.shape[-2:],
     )
 
 
@@ -89,15 +103,26 @@ def extract_common_bounding_box(bounding_boxes: list[BoundingBox, None]) -> Boun
         msg = "Different shapes, and not sure this is really supported or meaningful"
         raise ValueError(msg)
 
-    xmin = np.min(bb.xmin for bb in valid_boxes)
-    xmax = np.max(bb.xmin for bb in valid_boxes)
-    ymin = np.min(bb.ymin for bb in valid_boxes)
-    ymax = np.max(bb.ymin for bb in valid_boxes)
+    xmin = int(np.min([bb.xmin for bb in valid_boxes]))
+    xmax = int(np.max([bb.xmax for bb in valid_boxes]))
+    ymin = int(np.min([bb.ymin for bb in valid_boxes]))
+    ymax = int(np.max([bb.ymax for bb in valid_boxes]))
 
-    return BoundingBox(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
+    y_span = ymax - ymin
+    x_span = xmax - xmin
+
+    return BoundingBox(
+        xmin=xmin,
+        xmax=xmax,
+        ymin=ymin,
+        ymax=ymax,
+        y_span=y_span,
+        x_span=x_span,
+        original_shape=valid_boxes[0].original_shape,
+    )
 
 
-def get_bounding_box_for_fits(
+async def get_bounding_box_for_fits_coro(
     fits_path: Path, invalidate_zeros: bool = False
 ) -> BoundingBox:
     """Create a bounding box for an image contained in a FITS file.
@@ -113,19 +138,10 @@ def get_bounding_box_for_fits(
     Returns:
         BoundingBox: The bounding box that describes the bounds of valid data
     """
-    data = fits.getdata(fits_path)
+    data = await asyncio.to_thread(fits.getdata, fits_path, memmap=False)
     data = np.squeeze(data)
 
     if invalidate_zeros:
         data[data == 0.0] = np.nan
 
-    return create_bound_box_plane(image_data=data)
-
-
-async def get_bounding_box_for_image_coro(
-    fits_path: Path, invalidate_zeros: bool = False
-) -> BoundingBox:
-    """async version of get_bound"""
-    return get_bounding_box_for_fits(
-        fits_path=fits_path, invalidate_zeros=invalidate_zeros
-    )
+    return await asyncio.to_thread(create_bound_box_plane, image_data=data)
