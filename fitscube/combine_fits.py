@@ -160,7 +160,13 @@ async def create_cube_from_scratch_coro(
     if output_file.exists() and overwrite:
         output_file.unlink()
 
-    output_wcs = WCS(output_header)
+    try:
+        output_wcs = WCS(output_header)
+    except Exception as e:
+        logger.error("Error creating new header")
+        for k in output_header:
+            logger.error(f"{k} = {output_header[k]}")
+        raise e
     output_shape = output_wcs.array_shape
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
@@ -324,6 +330,13 @@ async def create_output_cube_coro(
         key = f"{k}{fits_idx}"
         logger.debug(f"{key}={new_header[key]}")
 
+    # Add extra transform fields for consistency
+    if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
+        transform_type = "CD" if "CD1_1" in new_header else "PC"
+        pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
+        logger.info(f"Adding {pv1} to header")
+        new_header[pv1] = 1.0
+
     if ignore_spec or not even_spec:
         logger.info(
             f"Ignore the specrency information, {ignore_spec=} or {not even_spec=}"
@@ -344,9 +357,6 @@ async def create_output_cube_coro(
             f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
-
-    if time_domain_mode:
-        new_header["COMMENT"] = "The frequency/chan axis in this cube represents TIME."
 
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
