@@ -168,15 +168,9 @@ async def create_cube_from_scratch_coro(
     try:
         output_wcs = WCS(output_header)
     except Exception as e:
-<<<<<<< HEAD
-        logger.critical("Error creating new header")
-        for k in output_header:
-            logger.critical(f"{k} = {output_header[k]}")
-=======
         logger.error("Error creating new header")
         for k in output_header:
             logger.error(f"{k} = {output_header[k]}")
->>>>>>> upstream/master
         raise e
     output_shape = output_wcs.array_shape
     msg = f"Creating a new FITS file with shape {output_shape}"
@@ -344,22 +338,11 @@ async def create_output_cube_coro(
         logger.debug(f"{key}={new_header[key]}")
 
     # Add extra transform fields for consistency
-<<<<<<< HEAD
-    if ("PV1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
-        logger.info("Inserting PV fields into header")
-        pv1 = f"PC{fits_idx}_1"
-        logger.info(f"Adding {pv1} to header")
-        new_header[pv1] = 1.0
-        pv2 = f"PC{fits_idx}_2"
-        logger.info(f"Adding {pv2} to header")
-        new_header[pv2] = 0.0
-=======
     if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
         transform_type = "CD" if "CD1_1" in new_header else "PC"
         pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
         logger.info(f"Adding {pv1} to header")
         new_header[pv1] = 1.0
->>>>>>> upstream/master
 
     if ignore_spec or not even_spec:
         logger.info(
@@ -382,7 +365,6 @@ async def create_output_cube_coro(
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
 
-<<<<<<< HEAD
     if bounding_box:
         logger.info("Updating CRPIX1 and CRPIX2 header values to reflect bounding box")
         new_header["CRPIX1"] -= bounding_box.ymin
@@ -391,8 +373,6 @@ async def create_output_cube_coro(
         new_header["NAXIS1"] = bounding_box.y_span
         new_header["NAXIS2"] = bounding_box.x_span
 
-=======
->>>>>>> upstream/master
     plane_shape = list(old_data.shape)
     cube_shape = plane_shape.copy()
     if is_2d:
