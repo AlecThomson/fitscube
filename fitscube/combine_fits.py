@@ -648,7 +648,7 @@ async def process_channel(
             fits.getdata, file_list[old_channel], memmap=False
         )
 
-    if bounding_box:
+    if bounding_box is not None:
         plane = plane[
             ...,
             bounding_box.xmin : bounding_box.xmax,
@@ -677,6 +677,7 @@ async def combine_fits_coro(
     max_workers: int | None = None,
     time_domain_mode: bool = False,
     bounding_box: bool = False,
+    invalidate_zeros: bool = False,
 ) -> u.Quantity:
     """Combine FITS files into a cube.
     Can handle either frequency or time dimensions agnostically
@@ -688,6 +689,7 @@ async def combine_fits_coro(
         create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
         bounding_box (bool, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input daata is needed, but output cube is smaller. Defaults to False.
+        invalidate_zeros (bool, optionals): Set pixels whose values are exactly zero to NaNs. Defaults to False.
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
@@ -736,7 +738,9 @@ async def combine_fits_coro(
     final_bounding_box = None
     if bounding_box:
         boxes_futures = [
-            get_bounding_box_for_fits_coro(fits_path=fits_path, invalidate_zeros=True)
+            get_bounding_box_for_fits_coro(
+                fits_path=fits_path, invalidate_zeros=invalidate_zeros
+            )
             for fits_path in file_list
         ]
         boxes = await gather_with_limit(
@@ -784,7 +788,7 @@ async def combine_fits_coro(
                 is_missing=is_missing,
                 file_list=file_list,
                 bounding_box=final_bounding_box,
-                invalidate_zeros=True,
+                invalidate_zeros=invalidate_zeros,
             )
             coros.append(coro)
 
@@ -872,6 +876,11 @@ def get_parser(
         action="store_true",
         help="Attempt to consider padded images when creating the cube. Requires an extract read of the input data.",
     )
+    parser.add_argument(
+        "--invalidate-zeros",
+        action="store_true",
+        help="Set pixels whose values are exactly zero to NaNs",
+    )
 
     return parser
 
@@ -913,6 +922,7 @@ def cli(args: argparse.Namespace | None = None) -> None:
         max_workers=args.max_workers,
         time_domain_mode=time_domain_mode,
         bounding_box=args.bounding_box,
+        invalidate_zeros=args.invalidate_zeros,
     )
 
     spequency = "times" if time_domain_mode else "frequencies"
