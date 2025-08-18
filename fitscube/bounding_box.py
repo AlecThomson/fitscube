@@ -76,11 +76,13 @@ def create_bound_box_plane(image_data: np.ndarray) -> BoundingBox | None:
     )
 
 
-def extract_common_bounding_box(bounding_boxes: list[BoundingBox, None]) -> BoundingBox:
+def extract_common_bounding_box(
+    bounding_boxes: list[BoundingBox | None],
+) -> BoundingBox:
     """Get the smallest bounding box that encompasses all bounding boxes
 
     Args:
-        bounding_boxes (list[BoundingBox, None]): A list of bounding boxes. If None (returned for invalid images) skip it.
+        bounding_boxes (list[BoundingBox | None]): A list of bounding boxes. If None (returned for invalid images) skip it.
 
     Raises:
         ValueError: If all input bounding boxes are invalid
