@@ -126,7 +126,7 @@ def extract_common_bounding_box(
 
 async def get_bounding_box_for_fits_coro(
     fits_path: Path, invalidate_zeros: bool = False
-) -> BoundingBox:
+) -> BoundingBox | None:
     """Create a bounding box for an image contained in a FITS file.
 
     The assumption is that the FITS file contains an image, not a cube.
@@ -138,7 +138,7 @@ async def get_bounding_box_for_fits_coro(
         invalidate_zeros (bool, optional): Mark pixels that are exactly 0.0 as invalid (NaN them). Defaults to False.
 
     Returns:
-        BoundingBox: The bounding box that describes the bounds of valid data
+        BoundingBox | None: The bounding box that describes the bounds of valid data. If all data are invalid (and not bounding box possible) None is returned.
     """
     data = await asyncio.to_thread(fits.getdata, fits_path, memmap=False)
     data = np.squeeze(data)
