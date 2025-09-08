@@ -20,10 +20,10 @@ def test_bound_box_plane() -> None:
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 0
     assert bb.ymin == 0
-    assert bb.xmax == 99
-    assert bb.ymax == 99
-    assert bb.x_span == 99
-    assert bb.y_span == 99
+    assert bb.xmax == 100
+    assert bb.ymax == 100
+    assert bb.x_span == 100
+    assert bb.y_span == 100
 
     image[:, :4] = np.nan
     image[96:, :] = np.nan
@@ -32,10 +32,10 @@ def test_bound_box_plane() -> None:
     assert isinstance(bb, BoundingBox)
     assert bb.xmin == 0
     assert bb.ymin == 4
-    assert bb.xmax == 95
-    assert bb.ymax == 99
-    assert bb.x_span == 95
-    assert bb.y_span == 95
+    assert bb.xmax == 96
+    assert bb.ymax == 100
+    assert bb.x_span == 96
+    assert bb.y_span == 96
 
 
 def test_extract_common_bounding_box() -> None:
@@ -58,8 +58,8 @@ def test_extract_common_bounding_box() -> None:
     bb = extract_common_bounding_box(bounding_boxes=bbs)
     assert bb.xmin == 2
     assert bb.ymin == 0
-    assert bb.xmax == 99
-    assert bb.ymax == 97
+    assert bb.xmax == 100
+    assert bb.ymax == 98
 
 
 def test_extract_common_bounding_box_error() -> None:
@@ -88,5 +88,5 @@ async def test_get_bounding_box_from_fits(time_image_paths) -> None:
     common_bb = extract_common_bounding_box(bounding_boxes=futures)
     assert common_bb.xmin == 0
     assert common_bb.ymin == 0
-    assert common_bb.xmax == 99
-    assert common_bb.ymax == 99
+    assert common_bb.xmax == 100
+    assert common_bb.ymax == 100
