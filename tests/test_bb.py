@@ -79,6 +79,12 @@ def test_extract_common_bounding_box_error() -> None:
 
 @pytest.mark.asyncio
 async def test_get_bounding_box_from_fits(time_image_paths) -> None:
+    """!!! NOTE: Sometimes this test can raise the following error:
+
+    > Exception ignored in: <socket.socket fd=-1, family=1, type=1, proto=0>
+
+    Not sure why it is capable of such a thing.
+    """
     futures = [
         await get_bounding_box_for_fits_coro(fits_path=fits_path)
         for fits_path in time_image_paths
