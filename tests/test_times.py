@@ -92,6 +92,14 @@ def test_even_combine(file_list: list[Path], even_specs: u.Quantity, output_file
 def test_uneven_combine(
     file_list: list[Path], even_specs: u.Quantity, output_file: Path
 ):
+    """!!!! NOTE: For some unknown reason thios test *SOMETIMES* raises the
+    following error:
+
+    > FAILED tests/test_times.py::test_uneven - ValueError: operands could not be broadcast together with shapes (5,) (6,)
+
+    Completely unclear to me why
+    """
+
     # uneven_specs = np.concatenate([even_specs[0:1], even_specs[3:]])
     file_array = np.array(file_list)
     uneven_files = np.concatenate([file_array[0:1], file_array[3:]]).tolist()
