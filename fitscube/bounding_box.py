@@ -15,7 +15,8 @@ from fitscube.logging import logger
 
 @dataclass(frozen=True)
 class BoundingBox:
-    """Simple container to represent a bounding box"""
+    """Simple container to represent a bounding box. Maximum values can be
+    used as is when slicing."""
 
     xmin: int
     """Minimum x pixel"""
