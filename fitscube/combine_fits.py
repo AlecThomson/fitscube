@@ -48,7 +48,7 @@ BIT_DICT = {
     8: 1,
 }
 FLOAT_LENGTH = Literal[16, 32, 64]
-FLOAT_TYPE = {64: np.float64, 32: np.float32, 16: np.float16}
+FLOAT_TYPE = {64: ">f8", 32: ">f4", 16: ">f2"}
 
 warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
 warnings.filterwarnings("ignore", category=VerifyWarning)
@@ -677,11 +677,13 @@ async def process_channel(
 
         # TJG: This is causing things to fail!
         nplane = plane.astype(float_type)
-        logger.info(nplane == plane)
+        logger.info(f"{np.all(nplane == plane)=}")
+        logger.critical(f"{float_type=} {plane.dtype=} {nplane.dtype=}")
+        plane = nplane
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
-        plane=nplane,
+        plane=plane,
         chan=new_channel,
         header=new_header,
     )
