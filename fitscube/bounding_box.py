@@ -15,16 +15,17 @@ from fitscube.logging import logger
 
 @dataclass(frozen=True)
 class BoundingBox:
-    """Simple container to represent a bounding box"""
+    """Simple container to represent a bounding box. Maximum values can be
+    used as is when slicing."""
 
     xmin: int
     """Minimum x pixel"""
     xmax: int
     """Maximum x pixel"""
     ymin: int
-    """Minimum y pixel"""
+    """Minimum y pixel. Can be used as is in slice (e.g. is exclusive). """
     ymax: int
-    """Maximum y pixel"""
+    """Maximum y pixel Can be used as is in slice (e.g. is exclusive)."""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
     y_span: int
@@ -61,6 +62,9 @@ def create_bound_box_plane(image_data: np.ndarray) -> BoundingBox | None:
     # Now get the first and last index
     xmin, xmax = np.where(x_valid)[0][[0, -1]]
     ymin, ymax = np.where(y_valid)[0][[0, -1]]
+
+    xmax += 1
+    ymax += 1
 
     y_span = ymax - ymin
     x_span = xmax - xmin

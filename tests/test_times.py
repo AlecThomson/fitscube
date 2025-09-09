@@ -92,6 +92,14 @@ def test_even_combine(file_list: list[Path], even_specs: u.Quantity, output_file
 def test_uneven_combine(
     file_list: list[Path], even_specs: u.Quantity, output_file: Path
 ):
+    """!!!! NOTE: For some unknown reason thios test *SOMETIMES* raises the
+    following error:
+
+    > FAILED tests/test_times.py::test_uneven - ValueError: operands could not be broadcast together with shapes (5,) (6,)
+
+    Completely unclear to me why
+    """
+
     # uneven_specs = np.concatenate([even_specs[0:1], even_specs[3:]])
     file_array = np.array(file_list)
     uneven_files = np.concatenate([file_array[0:1], file_array[3:]]).tolist()
@@ -149,3 +157,113 @@ def test_wsclean_images_create_axis(time_image_paths, tmpdir) -> None:
         # The TIME axis will be appended as a new dimension
         cube_image_data = cube_data[i]
         assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_wsclean_images_create_axis_floating(time_image_paths, tmpdir) -> None:
+    """Ensure that the combined cube conforms to the input data"""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    for float_length, float_rep in ((32, ">f4"), (64, ">f8")):
+        combine_fits(
+            file_list=time_image_paths,
+            out_cube=out_cube,
+            overwrite=True,
+            time_domain_mode=True,
+            float_length=float_length,  # type: ignore [arg-type]
+        )
+
+        cube_data = fits.getdata(out_cube)
+        assert cube_data.dtype == float_rep
+        for i, time_image_path in enumerate(time_image_paths):
+            image_data = fits.getdata(time_image_path)
+            # The TIME axis will be appended as a new dimension
+            cube_image_data = cube_data[i]
+            assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_wsclean_images_create_axis_withbb(time_image_paths, tmpdir) -> None:
+    """Ensure that the combined cube conforms to the input data. This will use the
+    bounding box option. This should led to no change."""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    combine_fits(
+        file_list=time_image_paths,
+        out_cube=out_cube,
+        overwrite=True,
+        time_domain_mode=True,
+        bounding_box=True,
+    )
+
+    cube_data = fits.getdata(out_cube)
+    for i, time_image_path in enumerate(time_image_paths):
+        image_data = fits.getdata(time_image_path)
+        # The TIME axis will be appended as a new dimension
+        cube_image_data = cube_data[i]
+        assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_wsclean_images_create_axis_withbb_noinvalidate0(
+    time_image_paths_withzeroborder, tmpdir
+) -> None:
+    """Ensure that the combined cube conforms to the input data. This will use the
+    bounding box option. This should led to no change."""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine_zeros"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    combine_fits(
+        file_list=time_image_paths_withzeroborder,
+        out_cube=out_cube,
+        overwrite=True,
+        time_domain_mode=True,
+        bounding_box=True,
+        invalidate_zeros=False,
+    )
+
+    cube_data = fits.getdata(out_cube)
+    assert cube_data.squeeze().shape[-2:] == (100, 100)
+    for i, time_image_path in enumerate(time_image_paths_withzeroborder):
+        image_data = fits.getdata(time_image_path)
+        # The TIME axis will be appended as a new dimension
+        cube_image_data = cube_data[i]
+        assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_wsclean_images_create_axis_withbb_invalidatezeros(
+    time_image_paths_withzeroborder, tmpdir
+) -> None:
+    """Ensure that the combined cube conforms to the input data. This will use the
+    bounding box option. This should led to no change. Here we also get fitscube to
+    mark pixels that are exactly 0 to be nans"""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine_zeros"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    combine_fits(
+        file_list=time_image_paths_withzeroborder,
+        out_cube=out_cube,
+        overwrite=True,
+        time_domain_mode=True,
+        bounding_box=True,
+        invalidate_zeros=True,
+    )
+
+    cube_data = fits.getdata(out_cube)
+    assert cube_data.squeeze().shape[-2:] == (90, 90)
+    for i, time_image_path in enumerate(time_image_paths_withzeroborder):
+        image_data = fits.getdata(time_image_path)
+        # The TIME axis will be appended as a new dimension
+        cube_image_data = cube_data[i]
+        assert np.allclose(image_data.squeeze()[5:-5, 5:-5], cube_image_data.squeeze())
