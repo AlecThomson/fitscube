@@ -683,13 +683,7 @@ async def process_channel(
     if "BITPIX" in new_header:
         bit_pix = abs(new_header["BITPIX"])
         float_type = FLOAT_TYPE[bit_pix]
-        logger.info(f"{bit_pix=} {float_type=}")
-
-        # TJG: This is causing things to fail!
-        nplane = plane.astype(float_type)
-        logger.info(f"{np.all(nplane == plane)=}")
-        logger.critical(f"{float_type=} {plane.dtype=} {nplane.dtype=}")
-        plane = nplane
+        plane = plane.astype(float_type)
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
