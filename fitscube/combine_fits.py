@@ -48,7 +48,7 @@ BIT_DICT = {
     8: 1,
 }
 FLOAT_LENGTH = Literal[16, 32, 64]
-FLOAT_TYPE = {64: ">f8", 32: ">f4", 16: ">f2"}
+FLOAT_TYPE = {64: ">f8", 32: ">f4"}
 
 warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
 warnings.filterwarnings("ignore", category=VerifyWarning)
@@ -388,10 +388,20 @@ async def create_output_cube_coro(
 
     logger.critical(f"{float_length=} {new_header['BITPIX']=}")
     if float_length is not None:
-        bit_pix = int(float_length / 8)
+        # Per astropy docs
+        # bITPIX    numpy data type
+        # 8         numpy.uint8 (note it is UNsigned integer)
+        # 16        numpy.int16
+        # 32        numpy.int32
+        # 64        numpy.int64
+        # -32       numpy.float32
+        # -64       numpy.float64
+        assert float_length in list(BIT_DICT.keys()), (
+            f"{float_length=} not in {BIT_DICT=}"
+        )
+        bit_pix = int(float_length)
         logger.info(f"Specified {float_length=}, corresponding to {bit_pix=}")
         new_header["BITPIX"] = -abs(bit_pix)
-        assert bit_pix in list(BIT_DICT.keys()), f"{bit_pix=} not in {BIT_DICT=}"
 
     output_header = await create_cube_from_scratch_coro(
         output_file=out_cube, output_header=new_header, overwrite=overwrite

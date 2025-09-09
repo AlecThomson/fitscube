@@ -160,6 +160,32 @@ def test_wsclean_images_create_axis(time_image_paths, tmpdir) -> None:
 
 
 @pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_wsclean_images_create_axis_floating(time_image_paths, tmpdir) -> None:
+    """Ensure that the combined cube conforms to the input data"""
+
+    tmpdir = Path(tmpdir) / "time_cube_combine"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    out_cube = tmpdir / "time_cube_mate.fits"
+
+    for float_length, float_rep in ((32, ">f4"), (64, ">f8")):
+        combine_fits(
+            file_list=time_image_paths,
+            out_cube=out_cube,
+            overwrite=True,
+            time_domain_mode=True,
+            float_length=float_length,  # type: ignore [arg-type]
+        )
+
+        cube_data = fits.getdata(out_cube)
+        assert cube_data.dtype == float_rep
+        for i, time_image_path in enumerate(time_image_paths):
+            image_data = fits.getdata(time_image_path)
+            # The TIME axis will be appended as a new dimension
+            cube_image_data = cube_data[i]
+            assert np.allclose(image_data.squeeze(), cube_image_data.squeeze())
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
 def test_wsclean_images_create_axis_withbb(time_image_paths, tmpdir) -> None:
     """Ensure that the combined cube conforms to the input data. This will use the
     bounding box option. This should led to no change."""
