@@ -363,7 +363,8 @@ async def create_output_cube_coro(
         new_header["COMMENT"] = (
             f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
         )
-        del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
+        for k in ("BMAJ", "BMIN", "BPA"):
+            new_header.pop(k, None)
 
     if bounding_box:
         logger.info("Updating CRPIX1 and CRPIX2 header values to reflect bounding box")
@@ -627,6 +628,33 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     return tab_hdu
 
 
+def load_and_preprocess_fits_data(
+    file_path: Path,
+    bounding_box: BoundingBox | None = None,
+    invalidate_zeros: bool = False,
+    wipe_with_nan: bool = False,
+) -> ArrayLike:
+    # Use memmap=False to force the data to be read into memory - gives a speedup
+    plane = fits.getdata(filename=file_path, memmap=False)
+
+    if bounding_box is not None:
+        plane = plane[
+            ...,
+            bounding_box.xmin : bounding_box.xmax,
+            bounding_box.ymin : bounding_box.ymax,
+        ]
+
+    # Bail out early if we need to replace with nans
+    if wipe_with_nan:
+        plane *= np.nan
+        return plane
+
+    if invalidate_zeros:
+        plane[plane == 0.0] = np.nan
+
+    return plane
+
+
 async def process_channel(
     file_handle: BufferedRandom,
     new_header: fits.Header,
@@ -639,23 +667,14 @@ async def process_channel(
 ) -> None:
     msg = f"Processing channel {new_channel}"
     logger.info(msg)
-    # Use memmap=False to force the data to be read into memory - gives a speedup
-    if is_missing:
-        plane = await asyncio.to_thread(fits.getdata, file_list[0], memamp=False)
-        plane *= np.nan
-    else:
-        plane = await asyncio.to_thread(
-            fits.getdata, file_list[old_channel], memmap=False
-        )
-
-    if bounding_box is not None:
-        plane = plane[
-            ...,
-            bounding_box.xmin : bounding_box.xmax,
-            bounding_box.ymin : bounding_box.ymax,
-        ]
-    if invalidate_zeros:
-        plane[plane == 0.0] = np.nan
+    file_to_load = file_list[0] if is_missing else file_list[old_channel]
+    plane = await asyncio.to_thread(
+        load_and_preprocess_fits_data,
+        file_to_load,
+        bounding_box=bounding_box,
+        invalidate_zeros=invalidate_zeros,
+        wipe_with_nan=is_missing,
+    )
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
@@ -664,6 +683,29 @@ async def process_channel(
         header=new_header,
     )
     del plane
+
+
+def check_for_any_beam(file_list: list[Path]) -> bool:
+    """Check to see if any input files have a beam encoded in the header
+
+    Args:
+        file_list (list[Path]): The collection of files to examine
+
+    Returns:
+        bool: Whether beam properties were found in any of the files
+    """
+    # This is the same as a any(), but breaks avoids reading un-necessary headers
+    # TODO: Should we ever do a test for consistent WCSs up front this should be
+    # moved over to that check
+    for file in file_list:
+        logger.debug(f"Examining {file=} for beam properties")
+        file_header = fits.getheader(file)
+        if "BMAJ" in file_header:
+            return True
+
+    # No beams were found among any of the inputers, so no beam information
+    # can be recorded in the output
+    return False
 
 
 async def combine_fits_coro(
@@ -704,7 +746,7 @@ async def combine_fits_coro(
         create_blanks=create_blanks,
         time_domain_mode=time_domain_mode,
     )
-    has_beams = "BMAJ" in fits.getheader(file_list[0])
+    has_beams = check_for_any_beam(file_list=file_list)
     if has_beams:
         msg = f"Found beam in {file_list[0]} - assuming all files have beams"
         logger.info(msg)

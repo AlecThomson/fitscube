@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from shutil import unpack_archive
 
+import astropy.units as u
+import numpy as np
 import pytest
+from astropy.io import fits
+from astropy.time import Time
 
 EXAMPLE_HEADER = "SIMPLE  =                    T / conforms to FITS standard                      BITPIX  =                  -32 / array data type                                NAXIS   =                    4 / number of array dimensions                     NAXIS1  =                 6192                                                  NAXIS2  =                 6192                                                  NAXIS3  =                    1                                                  NAXIS4  =                   72                                                  EXTEND  =                    T                                                  BSCALE  =                  1.0                                                  BZERO   =                  0.0                                                  BUNIT   = 'JY/BEAM '                                                            BMAJ    =  0.00398184964207042                                                  BMIN    =  0.00332268385509243                                                  BPA     =     77.3858939868987                                                  EQUINOX =               2000.0                                                  LONPOLE =                180.0                                                  BTYPE   = 'Intensity'                                                           TELESCOP= 'ASKAP   '                                                            OBJECT  = 'EMU_1141-55'                                                         ORIGIN  = 'WSClean '                                                            CTYPE1  = 'RA---SIN'                                                            CRPIX1  =               3097.0                                                  CRVAL1  =     173.522555019647                                                  CDELT1  =            -0.000625                                                  CUNIT1  = 'deg     '                                                            CTYPE2  = 'DEC--SIN'                                                            CRPIX2  =               3097.0                                                  CRVAL2  =    -55.3190947400628                                                  CDELT2  =             0.000625                                                  CUNIT2  = 'deg     '                                                            CTYPE3  = 'STOKES  '                                                            CRPIX3  =                  1.0                                                  CRVAL3  =                  1.0                                                  CDELT3  =                  1.0                                                  CUNIT3  = ''                                                                    CTYPE4  = 'FREQ    '                                                            CRPIX4  =                    1                                                  CRVAL4  =     801490740.740741                                                  CDELT4  =            4000000.0                                                  CUNIT4  = 'Hz      '                                                            SPECSYS = 'TOPOCENT'                                                            DATE-OBS= '2023-01-08T15:36:40.9'                                               WSCDATAC= 'DATA    '                                                            WSCVDATE= '2022-10-21'                                                          WSCVERSI= '3.2     '                                                            WSCWEIGH= 'Briggs''(-0)'                                                        WSCENVIS=     1026544.24656423                                                  WSCFIELD=                  0.0                                                  WSCGAIN =                  0.1                                                  WSCGKRNL=                  7.0                                                  WSCIMGWG=     4052355.35920529                                                  WSCMAJOR=                  9.0                                                  WSCMGAIN=                  0.9                                                  WSCMINOR=              62860.0                                                  WSCNEGCM=                  1.0                                                  WSCNEGST=                  0.0                                                  WSCNITER=            5000000.0                                                  WSCNORMF=     4052355.35920529                                                  WSCNVIS =            7648518.0                                                  WSCNWLAY=                  1.0                                                  WSCTHRES=                  0.0                                                  WSCVWSUM=           30594072.0                                                  COMMENT   FITS (Flexible Image Transport System) format is defined in 'AstronomyCOMMENT   and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H HISTORY wsclean -abs-mem 200 -local-rms-window 20 -size 6192 6192 -local-rms -foHISTORY rce-mask-rounds 4 -auto-mask 8.0 -auto-threshold 3.0 -channels-out 72 -mHISTORY gain 0.9 -nmiter 10 -niter 5000000 -multiscale-scale-bias 0.8 -multiscalHISTORY e-scales 0,4,8,16,24,32,48,64,92,128,196,512,796,1025 -fit-spectral-pol HISTORY 4 -weight briggs -0 -data-column DATA -scale 2.25asec -gridder wgridder HISTORY -wgridder-accuracy 0.0001 -join-channels -minuv-l 50.0 -beam-fitting-sizHISTORY e 1.25 -deconvolution-channels 8 -parallel-gridding 18 -temp-dir /dev/shHISTORY m/gal16b.8974844 -pol i -save-source-list -name /dev/shm/gal16b.8974844/HISTORY SB47138.EMU_1141-55.beam19.i /scratch3/gal16b/emu_download/flint_jollytrHISTORY actor/47138/SB47138.EMU_1141-55.beam19.ms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               END                                                                             "
 
@@ -65,3 +69,70 @@ def time_image_paths(tmpdir) -> list[Path]:
     image_paths.sort()
 
     return image_paths
+
+
+@pytest.fixture
+def even_specs() -> u.Quantity:
+    rng = np.random.default_rng()
+    # mjd 60000 to 60000.2
+    start = rng.integers(5184000000, 5184017280)
+    end = rng.integers(5184025920, 5184043200)
+    # start = rng.integers(0, 17280)
+    # end = rng.integers(25920, 43200)
+    num = rng.integers(6, 10)
+    # num=6
+    return np.linspace(start, end, num) * u.s
+
+
+@pytest.fixture
+def output_file():
+    yield Path("test.fits")
+    Path("test.fits").unlink()
+
+
+@pytest.fixture
+def file_list(even_specs: u.Quantity):
+    image = np.ones((1, 10, 10))
+    for i, spec in enumerate(even_specs):
+        header = fits.Header()
+        header["CRVAL3"] = spec.to(u.s).value
+        header["CDELT3"] = 9.98
+        header["CRPIX3"] = 1
+        header["CTYPE3"] = "TIME"
+        header["CUNIT3"] = "s"
+        header["DATE-OBS"] = Time(spec.to(u.d).value, format="mjd").isot
+        header["MJD-OBS"] = Time(spec.to(u.d).value, format="mjd").mjd
+        hdu = fits.PrimaryHDU(image * i, header=header)
+        hdu.writeto(f"plane_{i}.fits", overwrite=True)
+
+    yield [Path(f"plane_{i}.fits") for i in range(len(even_specs))]
+
+    for i in range(len(even_specs)):
+        Path(f"plane_{i}.fits").unlink()
+
+
+@pytest.fixture
+def file_list_onebeam(even_specs: u.Quantity):
+    """Same as above but one file with have a beam"""
+    image = np.ones((1, 10, 10))
+    for i, spec in enumerate(even_specs):
+        header = fits.Header()
+        header["CRVAL3"] = spec.to(u.s).value
+        header["CDELT3"] = 9.98
+        header["CRPIX3"] = 1
+        header["CTYPE3"] = "TIME"
+        header["CUNIT3"] = "s"
+        header["DATE-OBS"] = Time(spec.to(u.d).value, format="mjd").isot
+        header["MJD-OBS"] = Time(spec.to(u.d).value, format="mjd").mjd
+        if i == 3:
+            header["BMAJ"] = 1
+            header["BMIN"] = 1
+            header["BPA"] = 1
+
+        hdu = fits.PrimaryHDU(image * i, header=header)
+        hdu.writeto(f"plane_{i}.fits", overwrite=True)
+
+    yield [Path(f"plane_{i}.fits") for i in range(len(even_specs))]
+
+    for i in range(len(even_specs)):
+        Path(f"plane_{i}.fits").unlink()

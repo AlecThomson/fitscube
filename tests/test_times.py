@@ -6,48 +6,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
-from astropy.time import Time
 from fitscube.combine_fits import combine_fits, parse_specs
-
-
-@pytest.fixture
-def even_specs() -> u.Quantity:
-    rng = np.random.default_rng()
-    # mjd 60000 to 60000.2
-    start = rng.integers(5184000000, 5184017280)
-    end = rng.integers(5184025920, 5184043200)
-    # start = rng.integers(0, 17280)
-    # end = rng.integers(25920, 43200)
-    num = rng.integers(6, 10)
-    # num=6
-    return np.linspace(start, end, num) * u.s
-
-
-@pytest.fixture
-def output_file():
-    yield Path("test.fits")
-    Path("test.fits").unlink()
-
-
-@pytest.fixture
-def file_list(even_specs: u.Quantity):
-    image = np.ones((1, 10, 10))
-    for i, spec in enumerate(even_specs):
-        header = fits.Header()
-        header["CRVAL3"] = spec.to(u.s).value
-        header["CDELT3"] = 9.98
-        header["CRPIX3"] = 1
-        header["CTYPE3"] = "TIME"
-        header["CUNIT3"] = "s"
-        header["DATE-OBS"] = Time(spec.to(u.d).value, format="mjd").isot
-        header["MJD-OBS"] = Time(spec.to(u.d).value, format="mjd").mjd
-        hdu = fits.PrimaryHDU(image * i, header=header)
-        hdu.writeto(f"plane_{i}.fits", overwrite=True)
-
-    yield [Path(f"plane_{i}.fits") for i in range(len(even_specs))]
-
-    for i in range(len(even_specs)):
-        Path(f"plane_{i}.fits").unlink()
 
 
 def test_parse_specs(file_list: list[Path], even_specs: u.Quantity):
