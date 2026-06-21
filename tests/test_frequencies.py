@@ -6,7 +6,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.combine_fits import combine_fits, parse_specs
+from fitscube.combine_fits import combine_fits, even_spacing, parse_specs
 
 
 @pytest.fixture
@@ -108,3 +108,16 @@ def test_uneven_combine(
             assert chan in (1, 2)
             continue
         assert np.allclose(plane, image)
+
+
+def test_even_spacing_non_adjacent_gaps():
+    # Present channels 0, 3, 5 GHz on a 1 GHz grid (1, 2, 4 missing). No two
+    # surviving channels are adjacent, so min(diffs) == 2 GHz would mis-grid the
+    # axis to [0, 2, 4] and drop the real channels. The gcd of the diffs
+    # [3, 2] GHz recovers the true 1 GHz step.
+    specs = np.array([0.0, 3.0, 5.0]) * u.GHz
+    new_specs, missing_chan_idx = even_spacing(specs)
+    assert len(new_specs) == 6, "should rebuild the full 0..5 GHz grid"
+    assert missing_chan_idx.sum() == 3
+    expected_missing = np.array([False, True, True, False, True, False])
+    assert np.array_equal(missing_chan_idx, expected_missing)
