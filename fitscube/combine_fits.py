@@ -132,6 +132,41 @@ def isin_close(
     return np.isclose(element[:, None], test_element, atol, rtol).any(1)
 
 
+def grid_step(diffs: ArrayLike) -> float:
+    """Recover the fundamental channel step from the observed diffs.
+
+    On a regular grid with missing channels every diff is an integer multiple
+    of the channel width, so the gcd of the diffs recovers that width even when
+    no two surviving channels are adjacent -- the case where ``min(diffs)``
+    overestimates the step (e.g. present channels 0, 3, 5 give ``min == 2`` but
+    the true step is 1). Falls back to ``min(diffs)`` if the gcd is numerically
+    unstable or does not divide every diff, so the common case is unchanged (any
+    surviving adjacent pair makes the gcd equal the minimum diff exactly).
+
+    Args:
+        diffs (ArrayLike): Differences between consecutive spec values.
+
+    Returns:
+        float: Estimated regular grid step.
+    """
+    diffs = np.abs(np.asarray(diffs, dtype=np.longdouble))
+    min_diff = np.min(diffs)
+    tol = np.max(diffs) * 1e-6
+
+    g = diffs[0]
+    for d in diffs[1:]:
+        a, b = (g, d) if g >= d else (d, g)
+        # Tolerant Euclid: stop once the remainder is within the noise floor.
+        while b > tol:
+            a, b = b, a % b
+        g = a
+
+    divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
+    if g <= tol or not divides_all:
+        return min_diff
+    return g
+
+
 def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
     """Make the frequencies or times evenly spaced.
 
@@ -143,9 +178,9 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     """
     specs_arr = specs.value.astype(np.longdouble)
     diffs = np.diff(specs_arr)
-    min_diff: float = np.min(diffs)
-    # Create a new array with the minimum difference
-    new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], min_diff)
+    step = grid_step(diffs)
+    # Create a new array with the fundamental grid step
+    new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], step)
     missing_chan_idx = np.logical_not(
         isin_close(new_specs, specs_arr, time_domain_mode)
     )
