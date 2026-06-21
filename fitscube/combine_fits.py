@@ -163,8 +163,8 @@ def grid_step(diffs: ArrayLike) -> float:
 
     divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
     if g <= tol or not divides_all:
-        return min_diff
-    return g
+        return float(min_diff)
+    return float(g)
 
 
 def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
