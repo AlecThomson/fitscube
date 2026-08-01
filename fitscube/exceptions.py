@@ -11,3 +11,11 @@ class TargetAxisMissingException(FITSCubeException):
 
 class ChannelMissingException(FITSCubeException):
     """Raised when a channel can not be accessed"""
+
+
+class ShapeMismatchException(FITSCubeException):
+    """Input images do not share a common pixel grid"""
+
+
+class AxisOrderException(FITSCubeException):
+    """The spectral axis is not the slowest-varying axis of the cube"""

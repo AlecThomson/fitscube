@@ -10,28 +10,43 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
+from fitscube.asyncio import gather_with_limit, sync_wrapper
 from fitscube.logging import logger
 
 
 @dataclass(frozen=True)
 class BoundingBox:
-    """Simple container to represent a bounding box. Maximum values can be
-    used as is when slicing."""
+    """Simple container to represent a bounding box.
+
+    .. warning::
+        ``x`` and ``y`` here are the *numpy* axes, which are the reverse of the
+        FITS ``NAXIS`` convention:
+
+        - ``x`` is axis ``-2`` -- image rows -- which is ``NAXIS2`` (declination)
+        - ``y`` is axis ``-1`` -- image columns -- which is ``NAXIS1`` (right ascension)
+
+        So a plane is sliced as ``data[..., xmin:xmax, ymin:ymax]`` and the
+        trimmed header takes ``NAXIS1 = y_span``, ``NAXIS2 = x_span``.
+
+    Minimum values are inclusive and maximum values are exclusive, so both can
+    be used as is when slicing. Note that ``xmax``/``ymax`` were *inclusive*
+    prior to ``v2.3.2``.
+    """
 
     xmin: int
-    """Minimum x pixel"""
+    """Minimum row pixel (numpy axis -2, FITS NAXIS2). Inclusive."""
     xmax: int
-    """Maximum x pixel"""
+    """Maximum row pixel (numpy axis -2, FITS NAXIS2). Can be used as is in a slice (e.g. is exclusive)."""
     ymin: int
-    """Minimum y pixel. Can be used as is in slice (e.g. is exclusive). """
+    """Minimum column pixel (numpy axis -1, FITS NAXIS1). Inclusive."""
     ymax: int
-    """Maximum y pixel Can be used as is in slice (e.g. is exclusive)."""
+    """Maximum column pixel (numpy axis -1, FITS NAXIS1). Can be used as is in a slice (e.g. is exclusive)."""
     original_shape: tuple[int, int]
     """The original shape of the image. If constructed against a cube this is the shape of a single plane."""
     y_span: int
-    """The span between ymax and ymin"""
+    """The span between ymax and ymin (i.e. the trimmed NAXIS1)"""
     x_span: int
-    """The span between xmax and xmin"""
+    """The span between xmax and xmin (i.e. the trimmed NAXIS2)"""
 
 
 def create_bound_box_plane(image_data: np.ndarray) -> BoundingBox | None:
@@ -151,3 +166,40 @@ async def get_bounding_box_for_fits_coro(
         data[data == 0.0] = np.nan
 
     return await asyncio.to_thread(create_bound_box_plane, image_data=data)
+
+
+async def get_common_bounding_box_coro(
+    file_list: list[Path],
+    invalidate_zeros: bool = False,
+    max_workers: int | None = None,
+) -> BoundingBox:
+    """Compute the single bounding box that encompasses the valid data of every
+    image in ``file_list``.
+
+    This is the box that ``combine_fits`` computes internally when
+    ``bounding_box=True``. Compute it once with this function and pass the
+    result to ``combine_fits(bounding_box=...)`` when several cubes (e.g. an
+    image cube and its weights cube) must land on an identical pixel grid.
+
+    Args:
+        file_list (list[Path]): The FITS images to consider
+        invalidate_zeros (bool, optional): Mark pixels that are exactly 0.0 as invalid (NaN them). Defaults to False.
+        max_workers (int | None, optional): Maximum number of concurrent reads. Defaults to None.
+
+    Returns:
+        BoundingBox: The smallest bounding box that contains all valid data
+    """
+    boxes = await gather_with_limit(
+        max_workers,
+        *(
+            get_bounding_box_for_fits_coro(
+                fits_path=fits_path, invalidate_zeros=invalidate_zeros
+            )
+            for fits_path in file_list
+        ),
+        desc="Bounding boxes",
+    )
+    return extract_common_bounding_box(bounding_boxes=boxes)
+
+
+get_common_bounding_box = sync_wrapper(get_common_bounding_box_coro)

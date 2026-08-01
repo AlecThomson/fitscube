@@ -3,7 +3,7 @@
 
 Assumes:
 - All files have the same WCS
-- All files have the same shape / pixel grid
+- All files have the same shape / pixel grid (checked, see `check_matching_shapes`)
 - All the relevant information is in the first header of the first image
 - Frequency is either a WCS axis or in the REFFREQ header keyword OR
 - Time is present in the DATE-OBS header keyword for time-domain-mode
@@ -33,9 +33,9 @@ from tqdm.asyncio import tqdm
 from fitscube.asyncio import gather_with_limit, sync_wrapper
 from fitscube.bounding_box import (
     BoundingBox,
-    extract_common_bounding_box,
-    get_bounding_box_for_fits_coro,
+    get_common_bounding_box_coro,
 )
+from fitscube.exceptions import AxisOrderException, ShapeMismatchException
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
 T = TypeVar("T")
@@ -91,6 +91,9 @@ class FileSpequencyInfo(NamedTuple):
 async def write_channel_to_cube_coro(
     file_handle: BufferedRandom, plane: ArrayLike, chan: int, header: fits.Header
 ) -> None:
+    # Seeking by whole planes is only valid when every plane is the same size
+    # (enforced by check_matching_shapes_coro) and the spectral axis is the
+    # slowest-varying one (enforced by create_output_cube_coro).
     msg = f"Writing channel {chan} to cube"
     logger.info(msg)
     seek_length = len(header.tostring()) + (plane.nbytes * chan)
@@ -99,6 +102,56 @@ async def write_channel_to_cube_coro(
 
 
 write_channel_to_cube = sync_wrapper(write_channel_to_cube_coro)
+
+
+async def check_matching_shapes_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> tuple[int, int]:
+    """Confirm every input image shares the same NAXIS1/NAXIS2 pixel grid.
+
+    Planes are written to the cube at a fixed byte offset per channel, so
+    inputs of differing shape would silently slide against each other and
+    produce a scrambled cube with a self-consistent header.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        ShapeMismatchException: If any image differs in shape from the first
+
+    Returns:
+        tuple[int, int]: The common (NAXIS1, NAXIS2)
+    """
+    headers = await gather_with_limit(
+        max_workers,
+        *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
+        desc="Checking shapes",
+    )
+    shapes = [(header["NAXIS1"], header["NAXIS2"]) for header in headers]
+    expected = shapes[0]
+    offenders = [
+        f"{fits_path} has (NAXIS1, NAXIS2)={shape}"
+        for fits_path, shape in zip(file_list, shapes)
+        if shape != expected
+    ]
+    if offenders:
+        # Keep the message readable when a whole run is mismatched
+        shown = offenders[:10]
+        if len(offenders) > len(shown):
+            shown.append(f"...and {len(offenders) - len(shown)} more")
+        listing = "\n".join(shown)
+        msg = (
+            "All input images must share the same pixel grid. Expected "
+            f"(NAXIS1, NAXIS2)={expected} from {file_list[0]}, but found:\n{listing}"
+        )
+        raise ShapeMismatchException(msg)
+
+    return expected
+
+
+check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -210,23 +263,7 @@ async def create_cube_from_scratch_coro(
     msg = f"Creating a new FITS file with shape {output_shape}"
     logger.info(msg)
 
-    # If the output shape is less than 1801, we can create a blank array
-    # in memory and write it to disk
-    if np.prod(output_shape) < 1801:
-        msg = "Output cube is small enough to create in memory"
-        logger.warning(msg)
-        out_arr = np.zeros(output_shape)
-        fits.writeto(output_file, out_arr, output_header, overwrite=overwrite)
-        with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
-            hdu = hdu_list[0]
-            data = hdu.data
-            on_disk_shape = data.shape
-            assert data.shape == output_shape, (
-                f"Output shape {on_disk_shape} does not match header {output_shape}!"
-            )
-        return fits.getheader(output_file)
-
-    logger.info("Output cube is too large to create in memory. Creating a blank file.")
+    logger.info("Creating a blank file.")
 
     small_size = [1 for _ in output_shape]
     data = np.zeros(small_size)
@@ -387,7 +424,7 @@ async def create_output_cube_coro(
 
     if ignore_spec or not even_spec:
         logger.info(
-            f"Ignore the specrency information, {ignore_spec=} or {not even_spec=}"
+            f"Ignore the spequency information, {ignore_spec=} or {not even_spec=}"
         )
         new_header[f"CDELT{fits_idx}"] = 1
         del new_header[f"CUNIT{fits_idx}"]
@@ -402,15 +439,16 @@ async def create_output_cube_coro(
             "Full beam information is stored in the second FITS extension."
         )
         new_header["COMMENT"] = (
-            f"The value '{tiny}' repsenents a NaN PSF in the beamtable."
+            f"The value '{tiny}' represents a NaN PSF in the beamtable."
         )
         del new_header["BMAJ"], new_header["BMIN"], new_header["BPA"]
 
     if bounding_box:
         logger.info("Updating CRPIX1 and CRPIX2 header values to reflect bounding box")
+        # NOTE: BoundingBox x/y are numpy axes, so x -> NAXIS2 and y -> NAXIS1
         new_header["CRPIX1"] -= bounding_box.ymin
         new_header["CRPIX2"] -= bounding_box.xmin
-        logger.info("Updating NAXIS1 and NAXIS2 ro reflect bounding box")
+        logger.info("Updating NAXIS1 and NAXIS2 to reflect bounding box")
         new_header["NAXIS1"] = bounding_box.y_span
         new_header["NAXIS2"] = bounding_box.x_span
 
@@ -421,7 +459,7 @@ async def create_output_cube_coro(
     else:
         cube_shape[idx] = n_chan
 
-    logger.critical(f"{float_length=} {new_header['BITPIX']=}")
+    logger.debug(f"{float_length=} {new_header['BITPIX']=}")
     if float_length is not None:
         # Per astropy docs
         # bITPIX    numpy data type
@@ -437,6 +475,21 @@ async def create_output_cube_coro(
         bit_pix = int(float_length)
         logger.info(f"Specified {float_length=}, corresponding to {bit_pix=}")
         new_header["BITPIX"] = -abs(bit_pix)
+
+    # Planes are written at an offset of (plane bytes * channel), which only
+    # lands on the right plane when the spectral axis is the slowest-varying
+    # one - i.e. every axis above it in the cube is degenerate.
+    trailing_axes = {
+        f"NAXIS{axis}": new_header[f"NAXIS{axis}"]
+        for axis in range(fits_idx + 1, new_header["NAXIS"] + 1)
+    }
+    if any(naxis != 1 for naxis in trailing_axes.values()):
+        msg = (
+            f"The {ctype} axis (NAXIS{fits_idx}) must be the slowest-varying axis of "
+            f"the output cube, but non-degenerate axes sit above it: {trailing_axes}. "
+            "Reorder the axes of the input images before combining."
+        )
+        raise AxisOrderException(msg)
 
     output_header = await create_cube_from_scratch_coro(
         output_file=out_cube, output_header=new_header, overwrite=overwrite
@@ -699,7 +752,7 @@ async def process_channel(
     logger.info(msg)
     # Use memmap=False to force the data to be read into memory - gives a speedup
     if is_missing:
-        plane = await asyncio.to_thread(fits.getdata, file_list[0], memamp=False)
+        plane = await asyncio.to_thread(fits.getdata, file_list[0], memmap=False)
         plane *= np.nan
     else:
         plane = await asyncio.to_thread(
@@ -739,7 +792,7 @@ async def combine_fits_coro(
     overwrite: bool = False,
     max_workers: int | None = None,
     time_domain_mode: bool = False,
-    bounding_box: bool = False,
+    bounding_box: bool | BoundingBox = False,
     invalidate_zeros: bool = False,
     float_length: FLOAT_LENGTH | None = None,
 ) -> u.Quantity:
@@ -752,14 +805,19 @@ async def combine_fits_coro(
         ignore_spec (bool, optional): Ignore frequency/time information. Defaults to False.
         create_blanks (bool, optional): Attempt to create even frequency spacing. Defaults to False.
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
-        bounding_box (bool, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input daata is needed, but output cube is smaller. Defaults to False.
+        bounding_box (bool | BoundingBox, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input data is needed, but output cube is smaller. A BoundingBox may be supplied directly (see `get_common_bounding_box`) to force several cubes onto an identical pixel grid. Defaults to False.
         invalidate_zeros (bool, optionals): Set pixels whose values are exactly zero to NaNs. Defaults to False.
         float_length (Literal[16, 32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
+
+    Raises:
+        ShapeMismatchException: If the input images do not share a pixel grid
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
     """
     # TODO: Check that all files have the same WCS
+
+    await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
@@ -799,19 +857,16 @@ async def combine_fits_coro(
     specs = specs[new_sort_idx]
     missing_chan_idx = missing_chan_idx[new_sort_idx]
 
-    # Get the bounding box, if requested
-    final_bounding_box = None
-    if bounding_box:
-        boxes_futures = [
-            get_bounding_box_for_fits_coro(
-                fits_path=fits_path, invalidate_zeros=invalidate_zeros
-            )
-            for fits_path in file_list
-        ]
-        boxes = await gather_with_limit(
-            max_workers, *boxes_futures, desc="Bounding boxes"
+    # Get the bounding box, if requested. A caller supplied box is used as is,
+    # so that separate cubes can be forced onto a common pixel grid.
+    final_bounding_box = bounding_box if isinstance(bounding_box, BoundingBox) else None
+    if bounding_box is True:
+        final_bounding_box = await get_common_bounding_box_coro(
+            file_list=file_list,
+            invalidate_zeros=invalidate_zeros,
+            max_workers=max_workers,
         )
-        final_bounding_box = extract_common_bounding_box(bounding_boxes=boxes)
+    if final_bounding_box is not None:
         logger.info(f"The final bounding box is: {final_bounding_box=}")
 
     # Initialize the data cube
