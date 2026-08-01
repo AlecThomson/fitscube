@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import astropy.units as u
 import numpy as np
@@ -134,8 +135,14 @@ def test_blank_channels_are_created(
     """
     real_getdata = fits.getdata
 
-    def strict_getdata(*args, **kwargs):  # type: ignore[no-untyped-def]
-        unexpected = set(kwargs) - {"header", "memmap", "lazy_load_hdus", "ext"}
+    def strict_getdata(*args: Any, **kwargs: Any) -> Any:
+        unexpected = set(kwargs) - {
+            "filename",
+            "header",
+            "memmap",
+            "lazy_load_hdus",
+            "ext",
+        }
         if unexpected:
             msg = f"getdata() got unexpected keyword arguments {unexpected}"
             raise TypeError(msg)
