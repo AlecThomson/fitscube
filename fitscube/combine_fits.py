@@ -35,7 +35,11 @@ from fitscube.bounding_box import (
     BoundingBox,
     get_common_bounding_box_coro,
 )
-from fitscube.exceptions import AxisOrderException, ShapeMismatchException
+from fitscube.exceptions import (
+    AxisOrderException,
+    IrregularSpacingException,
+    ShapeMismatchException,
+)
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
 T = TypeVar("T")
@@ -242,8 +246,16 @@ def grid_step(diffs: ArrayLike) -> float:
 def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
     """Make the frequencies or times evenly spaced.
 
+    A regular grid cannot always hold every input - an irregular spacing whose
+    step cannot be recovered leaves inputs sitting between grid points, and equal
+    values collapse onto one. Those inputs would be dropped from the cube without
+    trace, so this raises rather than writing a cube that is missing data.
+
     Args:
         specs (u.Quantity): Original frequencies/times
+
+    Raises:
+        IrregularSpacingException: If a grid through the inputs would drop any of them
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
@@ -251,6 +263,11 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     # The grid is built from the first and last value, so an unsorted input would
     # otherwise give an empty (or reversed) grid. Callers sort later, not here.
     specs_arr = np.sort(specs.value.astype(np.longdouble))
+    if len(specs_arr) < 2:
+        return SpequencyInfo(
+            specs_arr * specs.unit, np.zeros(len(specs_arr)).astype(bool)
+        )
+
     diffs = np.diff(specs_arr)
     step = grid_step(diffs)
     # Create a new array with the fundamental grid step
@@ -258,6 +275,18 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     missing_chan_idx = np.logical_not(
         isin_close(new_specs, specs_arr, time_domain_mode)
     )
+
+    populated = int(np.logical_not(missing_chan_idx).sum())
+    if populated != len(specs_arr):
+        spequencies = "times" if time_domain_mode else "frequencies"
+        msg = (
+            f"Cannot place all {len(specs_arr)} {spequencies} on a regular grid of "
+            f"{step} {specs.unit} - only {populated} of {len(new_specs)} grid points "
+            "are matched, so blank channels would drop inputs. Combine without "
+            "blank channels, or regrid the inputs onto a common step."
+        )
+        raise IrregularSpacingException(msg)
+
     return SpequencyInfo(new_specs * specs.unit, missing_chan_idx)
 
 

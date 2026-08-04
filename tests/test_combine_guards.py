@@ -10,7 +10,11 @@ import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.combine_fits import check_matching_shapes, combine_fits
-from fitscube.exceptions import AxisOrderException, ShapeMismatchException
+from fitscube.exceptions import (
+    AxisOrderException,
+    IrregularSpacingException,
+    ShapeMismatchException,
+)
 
 
 def make_plane(
@@ -253,6 +257,51 @@ def test_spec_file_is_used(tmp_path: Path, file_list: list[Path]) -> None:
     )
 
     assert np.allclose(out_specs.to(u.Hz).value, np.loadtxt(spec_file))
+
+
+def test_irregular_spacing_never_drops_inputs(tmp_path: Path) -> None:
+    """A grid that cannot hold every input used to write a cube missing channels."""
+    rng = np.random.default_rng(0)
+    irregular = np.sort(rng.uniform(1e9, 2e9, 12)) * u.Hz
+    file_list = [
+        make_plane(tmp_path / f"irregular_{i}.fits", spec, value=float(i))
+        for i, spec in enumerate(irregular)
+    ]
+
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            create_blanks=True,
+            overwrite=True,
+        )
+
+    # Without blanks the irregular axis is kept and every input is written
+    out_specs = combine_fits(
+        file_list=file_list, out_cube=tmp_path / "cube.fits", overwrite=True
+    )
+    assert np.allclose(out_specs.to(u.Hz).value, irregular.to(u.Hz).value)
+    cube = fits.getdata(tmp_path / "cube.fits")
+    assert np.array_equal(cube[:, 0, 0, 0], np.arange(len(file_list)))
+
+
+def test_duplicate_frequencies_never_drop_inputs(
+    tmp_path: Path, specs: u.Quantity
+) -> None:
+    """Two inputs collapsing onto one grid point would lose one of them."""
+    duplicated = [specs[0], specs[0], specs[2]]
+    file_list = [
+        make_plane(tmp_path / f"duplicate_{i}.fits", spec, value=float(i))
+        for i, spec in enumerate(duplicated)
+    ]
+
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            create_blanks=True,
+            overwrite=True,
+        )
 
 
 def test_integer_input_is_not_cast_to_float(tmp_path: Path, specs: u.Quantity) -> None:
