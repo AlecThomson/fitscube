@@ -19,3 +19,7 @@ class ShapeMismatchException(FITSCubeException):
 
 class AxisOrderException(FITSCubeException):
     """The spectral axis is not the slowest-varying axis of the cube"""
+
+
+class IrregularSpacingException(FITSCubeException):
+    """A regular grid through the inputs would not hold every input"""

@@ -10,7 +10,11 @@ import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.combine_fits import check_matching_shapes, combine_fits
-from fitscube.exceptions import AxisOrderException, ShapeMismatchException
+from fitscube.exceptions import (
+    AxisOrderException,
+    IrregularSpacingException,
+    ShapeMismatchException,
+)
 
 
 def make_plane(
@@ -19,6 +23,8 @@ def make_plane(
     shape: tuple[int, ...] = (1, 1, 8, 8),
     value: float = 1.0,
     pol_outer: bool = False,
+    beam: float | None = None,
+    dtype: Any = np.float32,
 ) -> Path:
     """Write a single-channel image with a FREQ axis at ``spec``.
 
@@ -47,7 +53,11 @@ def make_plane(
     header[f"CRPIX{pol_axis}"] = 1.0
     header[f"CRVAL{pol_axis}"] = 1.0
     header[f"CDELT{pol_axis}"] = 1.0
-    fits.PrimaryHDU(np.full(shape, value, dtype=np.float32), header=header).writeto(
+    if beam is not None:
+        header["BMAJ"] = beam
+        header["BMIN"] = beam / 2
+        header["BPA"] = 0.0
+    fits.PrimaryHDU(np.full(shape, value, dtype=dtype), header=header).writeto(
         path, overwrite=True
     )
     return path
@@ -171,6 +181,168 @@ def test_blank_channels_are_created(
     assert np.allclose(cube[0], 0.0)
     assert np.allclose(cube[2], 1.0)
     assert np.allclose(cube[3], 2.0)
+
+
+def test_beam_table_follows_blank_channels(tmp_path: Path, specs: u.Quantity) -> None:
+    """The beam table used to be one row per file, so beams slid past the gap."""
+    gapped = [specs[0], specs[2], specs[3]]
+    file_list = [
+        make_plane(
+            tmp_path / f"gap_{i}.fits", spec, value=float(i), beam=1e-3 * (i + 1)
+        )
+        for i, spec in enumerate(gapped)
+    ]
+
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(
+        file_list=file_list, out_cube=out_cube, create_blanks=True, overwrite=True
+    )
+
+    with fits.open(out_cube) as hdu_list:
+        assert hdu_list[0].header["NAXIS4"] == 4
+        beam_table = hdu_list["BEAMS"]
+        assert beam_table.header["NCHAN"] == 4
+        assert np.array_equal(beam_table.data["CHAN"], np.arange(4))
+        majors = beam_table.data["BMAJ"]
+
+    tiny = np.finfo(np.float32).tiny
+    expected = (1e-3 * u.deg).to(u.arcsec).value
+    assert np.isclose(majors[0], expected)
+    assert np.isclose(majors[1], tiny)  # the blank channel
+    assert np.isclose(majors[2], 2 * expected)
+    assert np.isclose(majors[3], 3 * expected)
+
+
+def test_unsorted_input_with_blanks(tmp_path: Path, specs: u.Quantity) -> None:
+    """even_spacing builds the grid from the end points, so it must sort first."""
+    gapped = [specs[3], specs[0], specs[2]]
+    file_list = [
+        make_plane(tmp_path / f"unsorted_{i}.fits", spec, value=spec.to(u.Hz).value)
+        for i, spec in enumerate(gapped)
+    ]
+
+    out_cube = tmp_path / "cube.fits"
+    out_specs = combine_fits(
+        file_list=file_list, out_cube=out_cube, create_blanks=True, overwrite=True
+    )
+
+    assert np.allclose(out_specs.to(u.Hz).value, specs.to(u.Hz).value)
+    cube = fits.getdata(out_cube)
+    assert np.isnan(cube[1]).all()
+    for chan in (0, 2, 3):
+        assert np.allclose(cube[chan], specs[chan].to(u.Hz).value)
+
+
+def test_spec_list_is_used(tmp_path: Path, file_list: list[Path]) -> None:
+    """spec_list was validated and then ignored."""
+    spec_list = [2e9, 2.1e9, 2.2e9, 2.3e9]
+    out_specs = combine_fits(
+        file_list=file_list,
+        out_cube=tmp_path / "cube.fits",
+        spec_list=spec_list,
+        overwrite=True,
+    )
+
+    assert np.allclose(out_specs.to(u.Hz).value, spec_list)
+
+
+def test_spec_file_is_used(tmp_path: Path, file_list: list[Path]) -> None:
+    spec_file = tmp_path / "specs.txt"
+    np.savetxt(spec_file, [2e9, 2.1e9, 2.2e9, 2.3e9])
+    out_specs = combine_fits(
+        file_list=file_list,
+        out_cube=tmp_path / "cube.fits",
+        spec_file=spec_file,
+        overwrite=True,
+    )
+
+    assert np.allclose(out_specs.to(u.Hz).value, np.loadtxt(spec_file))
+
+
+def test_irregular_spacing_never_drops_inputs(tmp_path: Path) -> None:
+    """A grid that cannot hold every input used to write a cube missing channels."""
+    rng = np.random.default_rng(0)
+    irregular = np.sort(rng.uniform(1e9, 2e9, 12)) * u.Hz
+    file_list = [
+        make_plane(tmp_path / f"irregular_{i}.fits", spec, value=float(i))
+        for i, spec in enumerate(irregular)
+    ]
+
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            create_blanks=True,
+            overwrite=True,
+        )
+
+    # Without blanks the irregular axis is kept and every input is written
+    out_specs = combine_fits(
+        file_list=file_list, out_cube=tmp_path / "cube.fits", overwrite=True
+    )
+    assert np.allclose(out_specs.to(u.Hz).value, irregular.to(u.Hz).value)
+    cube = fits.getdata(tmp_path / "cube.fits")
+    assert np.array_equal(cube[:, 0, 0, 0], np.arange(len(file_list)))
+
+
+def test_duplicate_frequencies_never_drop_inputs(
+    tmp_path: Path, specs: u.Quantity
+) -> None:
+    """Two inputs collapsing onto one grid point would lose one of them."""
+    duplicated = [specs[0], specs[0], specs[2]]
+    file_list = [
+        make_plane(tmp_path / f"duplicate_{i}.fits", spec, value=float(i))
+        for i, spec in enumerate(duplicated)
+    ]
+
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            create_blanks=True,
+            overwrite=True,
+        )
+
+
+def test_integer_input_is_not_cast_to_float(tmp_path: Path, specs: u.Quantity) -> None:
+    """Integer BITPIX used to raise a KeyError from the float-only dtype map."""
+    file_list = [
+        make_plane(tmp_path / f"int_{i}.fits", spec, value=float(i), dtype=np.int16)
+        for i, spec in enumerate(specs)
+    ]
+
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+
+    assert fits.getheader(out_cube)["BITPIX"] == 16
+    cube = fits.getdata(out_cube)
+    assert np.array_equal(cube[:, 0, 0, 0], np.arange(len(file_list)))
+
+
+def test_blanks_need_float_output(tmp_path: Path, specs: u.Quantity) -> None:
+    """NaN blanks cannot be stored in an integer cube."""
+    gapped = [specs[0], specs[2], specs[3]]
+    file_list = [
+        make_plane(tmp_path / f"int_gap_{i}.fits", spec, dtype=np.int16)
+        for i, spec in enumerate(gapped)
+    ]
+
+    with pytest.raises(ValueError, match="float_length"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            create_blanks=True,
+            overwrite=True,
+        )
+
+    combine_fits(
+        file_list=file_list,
+        out_cube=tmp_path / "cube.fits",
+        create_blanks=True,
+        overwrite=True,
+        float_length=32,
+    )
+    assert np.isnan(fits.getdata(tmp_path / "cube.fits")[1]).all()
 
 
 def test_bounding_box_can_be_supplied(tmp_path: Path, specs: u.Quantity) -> None:
