@@ -48,7 +48,21 @@ BIT_DICT = {
     8: 1,
 }
 FLOAT_LENGTH = Literal[16, 32, 64]
-FLOAT_TYPE = {64: ">f8", 32: ">f4"}
+
+
+def fits_dtype(bit_pix: int) -> str:
+    """Big-endian numpy dtype for a FITS BITPIX value.
+
+    Args:
+        bit_pix (int): FITS BITPIX value (negative for floats, 8 is unsigned).
+
+    Returns:
+        str: numpy dtype string
+    """
+    if bit_pix == 8:
+        return ">u1"
+    return f">{'f' if bit_pix < 0 else 'i'}{abs(bit_pix) // 8}"
+
 
 warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
 warnings.filterwarnings("ignore", category=VerifyWarning)
@@ -234,7 +248,9 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     Returns:
         SpequencyInfo: specs, missing_chan_idx
     """
-    specs_arr = specs.value.astype(np.longdouble)
+    # The grid is built from the first and last value, so an unsorted input would
+    # otherwise give an empty (or reversed) grid. Callers sort later, not here.
+    specs_arr = np.sort(specs.value.astype(np.longdouble))
     diffs = np.diff(specs_arr)
     step = grid_step(diffs)
     # Create a new array with the fundamental grid step
@@ -599,13 +615,20 @@ async def parse_specs_coro(
         msg = "Must specify either spec_file or spec_list, not both"
         raise ValueError(msg)
 
-    if spec_file is not None:
-        msg = f"Reading from {spec_file}"
-        logger.info(msg)
-        file_specs = np.loadtxt(spec_file) * unit
+    if spec_file is not None or spec_list is not None:
+        if spec_file is not None:
+            msg = f"Reading from {spec_file}"
+            logger.info(msg)
+            file_specs = np.loadtxt(spec_file) * unit
+            source = str(spec_file)
+        else:
+            logger.info(f"Using the {spequencies} supplied directly")
+            file_specs = np.asarray(spec_list, dtype=float) * unit
+            source = "spec_list"
         assert len(file_specs) == len(file_list), (
-            f"Number of {spequencies} in {spec_file} ({len({file_specs})}) does not match number of images ({len(file_list)})"
+            f"Number of {spequencies} in {source} ({len(file_specs)}) does not match number of images ({len(file_list)})"
         )
+        specs = file_specs.copy()
         missing_chan_idx = np.zeros(len(file_list)).astype(bool)
 
     else:
@@ -677,6 +700,35 @@ def parse_beams(
         major=[beam.major.to(u.deg).value for beam in beam_list] * u.deg,
         minor=[beam.minor.to(u.deg).value for beam in beam_list] * u.deg,
         pa=[beam.pa.to(u.deg).value for beam in beam_list] * u.deg,
+    )
+
+
+def expand_beams(beams: Beams, missing_chan_idx: NDArray[np.bool_]) -> Beams:
+    """Place per-file beams onto the output channel grid, NaN for blank channels.
+
+    Args:
+        beams (Beams): One beam per input file, in output channel order
+        missing_chan_idx (NDArray[np.bool_]): Blank channels of the output cube
+
+    Returns:
+        Beams: One beam per output channel
+    """
+    present = np.logical_not(missing_chan_idx)
+    assert present.sum() == len(beams.major), (
+        f"Have {len(beams.major)} beams for {present.sum()} populated channels"
+    )
+    if not missing_chan_idx.any():
+        return beams
+
+    def _expand(values: u.Quantity) -> u.Quantity:
+        expanded = np.full(len(missing_chan_idx), np.nan) * values.unit
+        expanded[present] = values
+        return expanded
+
+    return Beams(
+        major=_expand(beams.major),
+        minor=_expand(beams.minor),
+        pa=_expand(beams.pa),
     )
 
 
@@ -762,8 +814,7 @@ def load_and_preprocess_fits_data(
 
     # Bail out early if we need to replace with nans
     if wipe_with_nan:
-        plane *= np.nan
-        return plane
+        return np.full(plane.shape, np.nan)
 
     if invalidate_zeros:
         plane[plane == 0.0] = np.nan
@@ -793,9 +844,7 @@ async def process_channel(
     )
 
     if "BITPIX" in new_header:
-        bit_pix = abs(new_header["BITPIX"])
-        float_type = FLOAT_TYPE[bit_pix]
-        plane = plane.astype(float_type)
+        plane = plane.astype(fits_dtype(new_header["BITPIX"]))
 
     await write_channel_to_cube_coro(
         file_handle=file_handle,
@@ -875,9 +924,17 @@ async def combine_fits_coro(
         create_blanks=create_blanks,
         time_domain_mode=time_domain_mode,
     )
+    # Sort the files by spequency. Beams are parsed after this so that they follow
+    # the channel order of the output cube, not the order the files were given in.
+    old_sort_idx = np.argsort(file_specs)
+    file_list = np.array(file_list)[old_sort_idx].tolist()
+    new_sort_idx = np.argsort(specs)
+    specs = specs[new_sort_idx]
+    missing_chan_idx = missing_chan_idx[new_sort_idx]
+
     has_beams = check_for_any_beam(file_list=file_list)
     if has_beams:
-        beams = parse_beams(file_list)
+        beams = expand_beams(parse_beams(file_list), missing_chan_idx)
         for beam in beams:
             logger.info(f"{beams[0]==beam=}")
 
@@ -895,13 +952,6 @@ async def combine_fits_coro(
     else:
         beams = None
         single_beam = False
-
-    # Sort the files by spequency
-    old_sort_idx = np.argsort(file_specs)
-    file_list = np.array(file_list)[old_sort_idx].tolist()
-    new_sort_idx = np.argsort(specs)
-    specs = specs[new_sort_idx]
-    missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     # Get the bounding box, if requested. A caller supplied box is used as is,
     # so that separate cubes can be forced onto a common pixel grid.
@@ -929,10 +979,24 @@ async def combine_fits_coro(
         float_length=float_length,
     )
 
+    if missing_chan_idx.any() and new_header["BITPIX"] > 0:
+        msg = (
+            f"Blank channels are written as NaNs, which integer output data "
+            f"({new_header['BITPIX']=}) cannot hold. Pass float_length=32 or 64."
+        )
+        raise ValueError(msg)
+
     new_channels = np.arange(len(specs))
     old_channels = np.arange(len(file_specs))
 
-    new_to_old = dict(zip(new_channels[np.logical_not(missing_chan_idx)], old_channels))
+    populated_channels = new_channels[np.logical_not(missing_chan_idx)]
+    # zip() would silently truncate the mapping and shift every channel after the
+    # disagreement, so refuse rather than write a mis-ordered cube.
+    assert len(populated_channels) == len(old_channels), (
+        f"Have {len(old_channels)} input files for {len(populated_channels)} "
+        f"populated channels of {len(new_channels)}"
+    )
+    new_to_old = dict(zip(populated_channels, old_channels))
 
     coros = []
     with out_cube.open("rb+") as file_handle:
