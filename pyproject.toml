@@ -191,3 +191,4 @@ ignored-modules = ["radio_beam"]
 
 [tool.codespell]
 ignore-words-list = "datas"
+skip = "uv.lock"

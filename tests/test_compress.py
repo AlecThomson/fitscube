@@ -7,12 +7,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.combine_fits import combine_fits, compress_cube
+from fitscube.combine_fits import COMPRESS_METHOD, combine_fits, compress_cube
 
 
 @pytest.mark.parametrize("method", ["gzip", "pgzip"])
 def test_compress_cube_roundtrip(
-    file_list_onebeam: list[Path], tmp_path: Path, method: str
+    file_list_onebeam: list[Path], tmp_path: Path, method: COMPRESS_METHOD
 ) -> None:
     """Compressing a finished cube should be lossless and remove the original"""
     output_file = tmp_path / "test.fits"

@@ -16,10 +16,11 @@ import asyncio
 import gzip
 import shutil
 import warnings
+from collections.abc import Callable
 from functools import partial
 from io import BufferedRandom
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
@@ -162,7 +163,7 @@ async def check_matching_shapes_coro(
     expected = shapes[0]
     offenders = [
         f"{fits_path} has (NAXIS1, NAXIS2)={shape}"
-        for fits_path, shape in zip(file_list, shapes)
+        for fits_path, shape in zip(file_list, shapes, strict=False)
         if shape != expected
     ]
     if offenders:
@@ -785,7 +786,7 @@ def get_polarisation(header: fits.Header) -> int:
         raise ValueError(msg)
 
     for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix)
+        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix, strict=False)
     ):
         if ctype == "STOKES":
             assert naxis <= 1, (
@@ -1033,7 +1034,7 @@ async def combine_fits_coro(
         f"Have {len(old_channels)} input files for {len(populated_channels)} "
         f"populated channels of {len(new_channels)}"
     )
-    new_to_old = dict(zip(populated_channels, old_channels))
+    new_to_old = dict(zip(populated_channels, old_channels, strict=False))
 
     coros = []
     with out_cube.open("rb+") as file_handle:
@@ -1106,11 +1107,13 @@ def compress_cube(
 
     if method == "pgzip":
         if pgzip is None:
-            msg = "method='pgzip' requires the 'pgzip' extra: pip install fitscube[pgzip]"
+            msg = (
+                "method='pgzip' requires the 'pgzip' extra: pip install fitscube[pgzip]"
+            )
             raise ImportError(msg)
-        opener = partial(pgzip.open, thread=max_workers)
+        opener: Callable[..., IO[bytes]] = partial(pgzip.open, thread=max_workers)
     else:
-        opener = gzip.open
+        opener = cast("Callable[..., IO[bytes]]", gzip.open)
 
     with out_cube.open("rb") as src, opener(compressed_path, "wb") as dst:
         shutil.copyfileobj(src, dst)
