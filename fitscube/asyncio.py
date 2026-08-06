@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
 from typing import (
     Any,
-    Awaitable,
-    Callable,
-    Coroutine,
     ParamSpec,
     Protocol,
     TypeVar,

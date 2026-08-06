@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gzip
+import shutil
 import warnings
+from collections.abc import Callable
+from functools import partial
 from io import BufferedRandom
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
@@ -41,6 +45,11 @@ from fitscube.exceptions import (
     ShapeMismatchException,
 )
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
+
+try:
+    import pgzip
+except ImportError:
+    pgzip = None
 
 T = TypeVar("T")
 
@@ -154,7 +163,7 @@ async def check_matching_shapes_coro(
     expected = shapes[0]
     offenders = [
         f"{fits_path} has (NAXIS1, NAXIS2)={shape}"
-        for fits_path, shape in zip(file_list, shapes)
+        for fits_path, shape in zip(file_list, shapes, strict=False)
         if shape != expected
     ]
     if offenders:
@@ -777,7 +786,7 @@ def get_polarisation(header: fits.Header) -> int:
         raise ValueError(msg)
 
     for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix)
+        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix, strict=False)
     ):
         if ctype == "STOKES":
             assert naxis <= 1, (
@@ -1025,7 +1034,7 @@ async def combine_fits_coro(
         f"Have {len(old_channels)} input files for {len(populated_channels)} "
         f"populated channels of {len(new_channels)}"
     )
-    new_to_old = dict(zip(populated_channels, old_channels))
+    new_to_old = dict(zip(populated_channels, old_channels, strict=False))
 
     coros = []
     with out_cube.open("rb+") as file_handle:
@@ -1070,6 +1079,47 @@ async def combine_fits_coro(
 
 
 combine_fits = sync_wrapper(combine_fits_coro)
+
+
+COMPRESS_METHOD = Literal["gzip", "pgzip"]
+
+
+def compress_cube(
+    out_cube: Path,
+    method: COMPRESS_METHOD = "gzip",
+    max_workers: int | None = None,
+) -> Path:
+    """Gzip-compress a finished cube in place, streaming to avoid loading it into memory.
+
+    Args:
+        out_cube (Path): Path of the already-written, uncompressed cube. Deleted on success.
+        method (COMPRESS_METHOD): 'gzip' uses the stdlib and needs nothing extra.
+            'pgzip' parallelizes compression across `max_workers` threads but
+            requires the 'pgzip' extra.
+        max_workers (int | None): Thread count passed to `pgzip`; ignored for 'gzip'.
+
+    Returns:
+        Path: Path of the compressed output, `out_cube` with a '.gz' suffix appended.
+    """
+    compressed_path = out_cube.with_suffix(out_cube.suffix + ".gz")
+    msg = f"Compressing {out_cube} to {compressed_path} via {method}"
+    logger.info(msg)
+
+    if method == "pgzip":
+        if pgzip is None:
+            msg = (
+                "method='pgzip' requires the 'pgzip' extra: pip install fitscube[pgzip]"
+            )
+            raise ImportError(msg)
+        opener: Callable[..., IO[bytes]] = partial(pgzip.open, thread=max_workers)
+    else:
+        opener = cast("Callable[..., IO[bytes]]", gzip.open)
+
+    with out_cube.open("rb") as src, opener(compressed_path, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+
+    out_cube.unlink()
+    return compressed_path
 
 
 def get_parser(
@@ -1148,6 +1198,19 @@ def get_parser(
         default=None,
         help="The number of floating point bits to use in the out cube. If None the input data precision is used.",
     )
+    parser.add_argument(
+        "--compress",
+        action="store_true",
+        help="Gzip-compress the output cube",
+    )
+    parser.add_argument(
+        "--compress-method",
+        choices=("gzip", "pgzip"),
+        default="gzip",
+        help="Compression backend for --compress. 'gzip' is stdlib and needs nothing "
+        "extra. 'pgzip' parallelizes across --max-workers threads but requires the "
+        "'pgzip' extra: pip install fitscube[pgzip]",
+    )
 
     return parser
 
@@ -1192,6 +1255,11 @@ def cli(args: argparse.Namespace | None = None) -> None:
         invalidate_zeros=args.invalidate_zeros,
         float_length=args.floating,
     )
+
+    if args.compress:
+        out_cube = compress_cube(
+            out_cube, method=args.compress_method, max_workers=args.max_workers
+        )
 
     spequency = "times" if time_domain_mode else "frequencies"
     logger.info("Written cube to %s", out_cube)
