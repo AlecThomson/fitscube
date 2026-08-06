@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gzip
+import shutil
 import warnings
+from functools import partial
 from io import BufferedRandom
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar
@@ -41,6 +44,11 @@ from fitscube.exceptions import (
     ShapeMismatchException,
 )
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
+
+try:
+    import pgzip
+except ImportError:
+    pgzip = None
 
 T = TypeVar("T")
 
@@ -1072,6 +1080,38 @@ async def combine_fits_coro(
 combine_fits = sync_wrapper(combine_fits_coro)
 
 
+COMPRESS_METHOD = Literal["gzip", "pgzip"]
+
+
+def compress_cube(
+    out_cube: Path,
+    method: COMPRESS_METHOD = "gzip",
+    max_workers: int | None = None,
+) -> Path:
+    """Gzip-compress a finished cube in place, streaming to avoid loading it into memory.
+
+    'gzip' uses the stdlib and needs nothing extra. 'pgzip' parallelizes
+    compression across `max_workers` threads but requires the 'pgzip' extra.
+    """
+    compressed_path = out_cube.with_suffix(out_cube.suffix + ".gz")
+    msg = f"Compressing {out_cube} to {compressed_path} via {method}"
+    logger.info(msg)
+
+    if method == "pgzip":
+        if pgzip is None:
+            msg = "method='pgzip' requires the 'pgzip' extra: pip install fitscube[pgzip]"
+            raise ImportError(msg)
+        opener = partial(pgzip.open, thread=max_workers)
+    else:
+        opener = gzip.open
+
+    with out_cube.open("rb") as src, opener(compressed_path, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+
+    out_cube.unlink()
+    return compressed_path
+
+
 def get_parser(
     parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
@@ -1148,6 +1188,19 @@ def get_parser(
         default=None,
         help="The number of floating point bits to use in the out cube. If None the input data precision is used.",
     )
+    parser.add_argument(
+        "--compress",
+        action="store_true",
+        help="Gzip-compress the output cube",
+    )
+    parser.add_argument(
+        "--compress-method",
+        choices=("gzip", "pgzip"),
+        default="gzip",
+        help="Compression backend for --compress. 'gzip' is stdlib and needs nothing "
+        "extra. 'pgzip' parallelizes across --max-workers threads but requires the "
+        "'pgzip' extra: pip install fitscube[pgzip]",
+    )
 
     return parser
 
@@ -1192,6 +1245,11 @@ def cli(args: argparse.Namespace | None = None) -> None:
         invalidate_zeros=args.invalidate_zeros,
         float_length=args.floating,
     )
+
+    if args.compress:
+        out_cube = compress_cube(
+            out_cube, method=args.compress_method, max_workers=args.max_workers
+        )
 
     spequency = "times" if time_domain_mode else "frequencies"
     logger.info("Written cube to %s", out_cube)

@@ -40,6 +40,7 @@ test = [
   "pytest >=6",
   "pytest-asyncio",
   "pytest-cov >=3",
+  "pgzip",
 ]
 dev = [
   "pytest >=6",
@@ -55,6 +56,9 @@ docs = [
 ]
 uvloop = [
   "uvloop",
+]
+pgzip = [
+  "pgzip",
 ]
 
 [project.urls]
@@ -119,6 +123,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "radio_beam.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pgzip.*"
 ignore_missing_imports = true
 
 
