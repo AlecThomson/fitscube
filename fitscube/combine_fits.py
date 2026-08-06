@@ -1090,8 +1090,15 @@ def compress_cube(
 ) -> Path:
     """Gzip-compress a finished cube in place, streaming to avoid loading it into memory.
 
-    'gzip' uses the stdlib and needs nothing extra. 'pgzip' parallelizes
-    compression across `max_workers` threads but requires the 'pgzip' extra.
+    Args:
+        out_cube (Path): Path of the already-written, uncompressed cube. Deleted on success.
+        method (COMPRESS_METHOD): 'gzip' uses the stdlib and needs nothing extra.
+            'pgzip' parallelizes compression across `max_workers` threads but
+            requires the 'pgzip' extra.
+        max_workers (int | None): Thread count passed to `pgzip`; ignored for 'gzip'.
+
+    Returns:
+        Path: Path of the compressed output, `out_cube` with a '.gz' suffix appended.
     """
     compressed_path = out_cube.with_suffix(out_cube.suffix + ".gz")
     msg = f"Compressing {out_cube} to {compressed_path} via {method}"
