@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
-      - run: uv run prek run --hook-stage manual --all-files
+      - run: uv run --optional dev prek run --hook-stage manual --all-files
 
   checks:
     name: Check Python ${{ matrix.python-version }} on ${{ matrix.runs-on }}
