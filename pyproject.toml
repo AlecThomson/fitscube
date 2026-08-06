@@ -11,7 +11,7 @@ authors = [
 description = "A package to produce produce FITS cubes."
 readme = "README.md"
 license.file = "LICENSE"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 1 - Planning",
   "Intended Audience :: Science/Research",
@@ -24,6 +24,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
@@ -43,6 +45,7 @@ test = [
   "pgzip",
 ]
 dev = [
+  "prek>=0.4.12",
   "pytest >=6",
   "pytest-cov >=3",
 ]
