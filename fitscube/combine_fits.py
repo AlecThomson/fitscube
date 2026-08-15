@@ -785,14 +785,16 @@ def get_polarisation(header: fits.Header) -> int:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
 
-    for _, (ctype, naxis, crpix) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crpix, strict=False)
+    for _, (ctype, naxis, crval) in enumerate(
+        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crval, strict=False)
     ):
         if ctype == "STOKES":
             assert naxis <= 1, (
                 f"Only one polarisation axis is supported - found {naxis}"
             )
-            return int(crpix - 1)
+            # FITS Stokes codes are 1=I, 2=Q, 3=U, 4=V; the BEAMS table POL
+            # column is 0-indexed, so subtract 1.
+            return int(crval - 1)
     return 0
 
 
