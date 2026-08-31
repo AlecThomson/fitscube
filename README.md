@@ -93,7 +93,11 @@ options:
 
 ```
 ❯ fitscube combine -h
-usage: fitscube combine [-h] [-o] [--create-blanks] [--time-domain] [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v] [--max-workers MAX_WORKERS]
+usage: fitscube combine [-h] [-o] [--create-blanks] [--time-domain]
+                        [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v]
+                        [--max-workers MAX_WORKERS] [--bounding-box] [--invalidate-zeros]
+                        [--no-blank-zero-beams] [--floating {8,16,32,64}] [--compress]
+                        [--compress-method {gzip,pgzip}]
                         file_list [file_list ...] out_cube
 
 positional arguments:
@@ -106,13 +110,30 @@ options:
   --create-blanks       Try to create a blank cube with evenly spaced frequencies
   --time-domain         Flag for constructing a time-domain cube
   --spec-file SPEC_FILE
-                        File containing frequencies in Hz or times in MJD s (if --time-domain == True)
+                        File containing frequencies in Hz or times in MJD s (if --time-domain ==
+                        True)
   --specs SPECS [SPECS ...]
                         List of frequencies or times in Hz or MJD s respectively
-  --ignore-spec         Ignore frequency or time information and just stack (probably not what you want)
+  --ignore-spec         Ignore frequency or time information and just stack (probably not what you
+                        want)
   -v, --verbosity       Increase output verbosity
   --max-workers MAX_WORKERS
                         Maximum number of workers to use for concurrent processing
+  --bounding-box        Attempt to consider padded images when creating the cube. Requires an
+                        extract read of the input data.
+  --invalidate-zeros    Set pixels whose values are exactly zero to NaNs
+  --no-blank-zero-beams
+                        Keep images whose restoring beam is exactly zero. By default such images
+                        are blanked with NaNs, as a zero beam means no PSF was fitted for that
+                        plane (e.g. a wsclean model image planted by -fit-spectral-pol)
+  --floating {8,16,32,64}
+                        The number of floating point bits to use in the out cube. If None the
+                        input data precision is used.
+  --compress            Gzip-compress the output cube
+  --compress-method {gzip,pgzip}
+                        Compression backend for --compress. 'gzip' is stdlib and needs nothing
+                        extra. 'pgzip' parallelizes across --max-workers threads but requires the
+                        'pgzip' extra: pip install fitscube[pgzip]
 ```
 
 ```
@@ -147,6 +168,19 @@ frequencies = combine_fits(
     file_list
 )
 ```
+
+## Zero-sized beams
+
+wsclean writes `BMAJ = BMIN = 0` into an image when no PSF was fitted for that
+plane. This happens with `-fit-spectral-pol`, where the channels that were not
+imaged directly are populated with the model image instead. Those planes look
+like data, but they are not comparable to the rest of the cube and will produce
+nasty effects downstream.
+
+By default `fitscube` blanks any such plane with NaNs and logs a warning. The
+corresponding row of the beam table is NaN-ed out too, and so is written with
+the usual `np.finfo(np.float32).tiny` sentinel. Pass `--no-blank-zero-beams`
+(or `blank_zero_beams=False` in Python) to keep the planes as they are.
 
 ## Convolving to a common resolution
 
