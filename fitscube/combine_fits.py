@@ -857,6 +857,11 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     pol = get_polarisation(old_header)
     pols = np.ones(nchan, dtype=int) * pol
     tiny = np.finfo(np.float32).tiny
+    # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
+    # the sentinel below exists to keep out of the table. NaN them first so they
+    # pick up the sentinel too. This is done per-beam rather than per-column: a
+    # zero BPA on an otherwise real beam is perfectly legitimate.
+    beams = nan_zero_beams(beams, find_zero_beams(beams))
     beam_table = Table(
         data=[
             # Replace NaNs with np.finfo(np.float32).tiny - this is the smallest

@@ -177,10 +177,14 @@ imaged directly are populated with the model image instead. Those planes look
 like data, but they are not comparable to the rest of the cube and will produce
 nasty effects downstream.
 
-By default `fitscube` blanks any such plane with NaNs and logs a warning. The
-corresponding row of the beam table is NaN-ed out too, and so is written with
-the usual `np.finfo(np.float32).tiny` sentinel. Pass `--no-blank-zero-beams`
-(or `blank_zero_beams=False` in Python) to keep the planes as they are.
+By default `fitscube` blanks any such plane with NaNs and logs a warning. Pass
+`--no-blank-zero-beams` (or `blank_zero_beams=False` in Python) to keep the
+image data as it is.
+
+Either way, a zero beam is never written into the beam table as a literal
+zero - it gets the same `np.finfo(np.float32).tiny` sentinel that already marks
+a NaN PSF, which is what keeps CASA happy. This is applied per beam, so a zero
+`BPA` on an otherwise valid beam is left alone.
 
 ## Convolving to a common resolution
 

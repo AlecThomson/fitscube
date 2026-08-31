@@ -90,10 +90,12 @@ def test_zero_beam_plane_is_blanked(
     assert np.allclose(cube[2], 3.0)
     assert np.allclose(cube[3], 4.0)
 
-    # The blanked beam is stored with the same NaN sentinel as any other NaN PSF
+    # The blanked beam is stored with the same NaN sentinel as any other NaN PSF.
+    # Compare exactly: np.isclose(0.0, tiny) is True, so it cannot tell the
+    # sentinel apart from the zero it is meant to replace.
     tiny = np.finfo(np.float32).tiny
-    assert np.isclose(majors[1], tiny)
-    assert np.isclose(minors[1], tiny)
+    assert majors[1] == tiny
+    assert minors[1] == tiny
     assert np.isclose(majors[0], (1e-3 * u.deg).to(u.arcsec).value)
 
 
@@ -114,7 +116,7 @@ def test_zero_beam_warns(
 
 
 def test_zero_beam_opt_out(tmp_path: Path, zero_beam_file_list: list[Path]) -> None:
-    """With blank_zero_beams=False the old behaviour is preserved."""
+    """With blank_zero_beams=False the image data is kept."""
     out_cube = tmp_path / "cube.fits"
     combine_fits(
         file_list=zero_beam_file_list,
@@ -128,7 +130,37 @@ def test_zero_beam_opt_out(tmp_path: Path, zero_beam_file_list: list[Path]) -> N
         majors = hdu_list["BEAMS"].data["BMAJ"]
 
     assert np.allclose(cube[1], 2.0)
-    assert np.isclose(majors[1], 0.0)
+    # The data survives, but a literal zero must never reach the beam table
+    assert majors[1] == np.finfo(np.float32).tiny
+
+
+def test_beam_table_never_holds_a_zero_beam(
+    tmp_path: Path, zero_beam_file_list: list[Path]
+) -> None:
+    """A zero BMAJ/BMIN always becomes the sentinel, whichever way we are called."""
+    tiny = np.finfo(np.float32).tiny
+
+    for blank in (True, False):
+        out_cube = tmp_path / f"cube_{blank}.fits"
+        combine_fits(
+            file_list=zero_beam_file_list,
+            out_cube=out_cube,
+            overwrite=True,
+            blank_zero_beams=blank,
+        )
+
+        with fits.open(out_cube) as hdu_list:
+            table = hdu_list["BEAMS"].data
+
+        assert not (table["BMAJ"] == 0.0).any()
+        assert not (table["BMIN"] == 0.0).any()
+        assert table["BMAJ"][1] == tiny
+        assert table["BMIN"][1] == tiny
+        assert table["BPA"][1] == tiny
+        # A zero position angle on a real beam is legitimate and must survive.
+        # make_plane writes BPA = 0 for every plane, so the untouched channels
+        # prove the sentinel is applied per-beam, not per-column.
+        assert (table["BPA"][[0, 2, 3]] == 0.0).all()
 
 
 def test_zero_beam_opt_out_still_warns(
@@ -189,8 +221,8 @@ def test_zero_beam_and_blank_channels(tmp_path: Path, specs: u.Quantity) -> None
     assert np.isnan(cube[1]).all()
     assert np.isnan(cube[2]).all()
     assert np.allclose(cube[3], 3.0)
-    assert np.isclose(majors[1], tiny)
-    assert np.isclose(majors[2], tiny)
+    assert majors[1] == tiny
+    assert majors[2] == tiny
     assert np.isclose(majors[3], (3e-3 * u.deg).to(u.arcsec).value)
 
 
