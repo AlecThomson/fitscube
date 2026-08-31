@@ -770,6 +770,50 @@ def expand_beams(beams: Beams, missing_chan_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
+def find_zero_beams(beams: Beams) -> NDArray[np.bool_]:
+    """Locate channels whose restoring beam is exactly zero.
+
+    A zero-sized beam is not a real PSF. wsclean writes one when a plane
+    carries no fitted beam at all - most notably the model image that
+    `-fit-spectral-pol` plants into an otherwise empty channel.
+
+    Args:
+        beams (Beams): One beam per output channel
+
+    Returns:
+        NDArray[np.bool_]: True where the beam is exactly zero
+    """
+    major = np.asarray(beams.major.to(u.deg).value)
+    minor = np.asarray(beams.minor.to(u.deg).value)
+
+    # NaN beams (blank channels, missing BMAJ) are already handled elsewhere,
+    # and NaN == 0.0 is False, so they never appear in this mask.
+    return np.asarray((major == 0.0) | (minor == 0.0), dtype=bool)
+
+
+def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
+    """Replace exactly-zero beams with NaNs.
+
+    Args:
+        beams (Beams): One beam per output channel
+        zero_beam_idx (NDArray[np.bool_]): Channels whose beam is exactly zero
+
+    Returns:
+        Beams: One beam per output channel, with the zero beams NaN-ed out
+    """
+
+    def _blank(values: u.Quantity) -> u.Quantity:
+        blanked = np.array(values.value, dtype=float)
+        blanked[zero_beam_idx] = np.nan
+        return blanked * values.unit
+
+    return Beams(
+        major=_blank(beams.major),
+        minor=_blank(beams.minor),
+        pa=_blank(beams.pa),
+    )
+
+
 def get_polarisation(header: fits.Header) -> int:
     """Get the polarisation axis.
 
@@ -813,6 +857,11 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     pol = get_polarisation(old_header)
     pols = np.ones(nchan, dtype=int) * pol
     tiny = np.finfo(np.float32).tiny
+    # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
+    # the sentinel below exists to keep out of the table. NaN them first so they
+    # pick up the sentinel too. This is done per-beam rather than per-column: a
+    # zero BPA on an otherwise real beam is perfectly legitimate.
+    beams = nan_zero_beams(beams, find_zero_beams(beams))
     beam_table = Table(
         data=[
             # Replace NaNs with np.finfo(np.float32).tiny - this is the smallest
@@ -871,6 +920,7 @@ async def process_channel(
     file_list: list[Path],
     bounding_box: BoundingBox | None = None,
     invalidate_zeros: bool = False,
+    blank_channel: bool = False,
 ) -> None:
     msg = f"Processing channel {new_channel}"
     logger.info(msg)
@@ -880,7 +930,7 @@ async def process_channel(
         file_to_load,
         bounding_box=bounding_box,
         invalidate_zeros=invalidate_zeros,
-        wipe_with_nan=is_missing,
+        wipe_with_nan=is_missing or blank_channel,
     )
 
     if "BITPIX" in new_header:
@@ -932,6 +982,7 @@ async def combine_fits_coro(
     bounding_box: bool | BoundingBox = False,
     invalidate_zeros: bool = False,
     float_length: FLOAT_LENGTH | None = None,
+    blank_zero_beams: bool = True,
 ) -> u.Quantity:
     """Combine FITS files into a cube.
     Can handle either frequency or time dimensions agnostically
@@ -945,6 +996,7 @@ async def combine_fits_coro(
         bounding_box (bool | BoundingBox, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input data is needed, but output cube is smaller. A BoundingBox may be supplied directly (see `get_common_bounding_box`) to force several cubes onto an identical pixel grid. Defaults to False.
         invalidate_zeros (bool, optionals): Set pixels whose values are exactly zero to NaNs. Defaults to False.
         float_length (Literal[16, 32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
+        blank_zero_beams (bool, optional): Blank (NaN) any input image whose restoring beam is exactly zero. wsclean writes such a beam when a plane holds no fitted PSF - e.g. the model image `-fit-spectral-pol` plants into a channel - and those planes are not comparable to the rest of the cube. Defaults to True.
 
     Raises:
         ShapeMismatchException: If the input images do not share a pixel grid
@@ -973,8 +1025,34 @@ async def combine_fits_coro(
     missing_chan_idx = missing_chan_idx[new_sort_idx]
 
     has_beams = check_for_any_beam(file_list=file_list)
+    zero_beam_idx = np.zeros(len(specs), dtype=bool)
     if has_beams:
         beams = expand_beams(parse_beams(file_list), missing_chan_idx)
+        found_zero_beams = find_zero_beams(beams)
+        if found_zero_beams.any():
+            # Keep the message readable when a whole run has zero beams
+            all_zero_chans = np.flatnonzero(found_zero_beams).tolist()
+            zero_chans = (
+                f"{all_zero_chans[:10]} (and {len(all_zero_chans) - 10} more)"
+                if len(all_zero_chans) > 10
+                else str(all_zero_chans)
+            )
+            if blank_zero_beams:
+                msg = (
+                    f"Channels {zero_chans} have a restoring beam of exactly zero. "
+                    "These planes carry no real PSF (e.g. a wsclean model image "
+                    "from -fit-spectral-pol) and are being blanked with NaNs. "
+                    "Pass blank_zero_beams=False (--no-blank-zero-beams) to keep them."
+                )
+                logger.warning(msg)
+                zero_beam_idx = found_zero_beams
+                beams = nan_zero_beams(beams, found_zero_beams)
+            else:
+                msg = (
+                    f"Channels {zero_chans} have a restoring beam of exactly zero, "
+                    "but blank_zero_beams=False, so they are being kept as-is."
+                )
+                logger.warning(msg)
         for beam in beams:
             logger.info(f"{beams[0]==beam=}")
 
@@ -1019,7 +1097,7 @@ async def combine_fits_coro(
         float_length=float_length,
     )
 
-    if missing_chan_idx.any() and new_header["BITPIX"] > 0:
+    if (missing_chan_idx | zero_beam_idx).any() and new_header["BITPIX"] > 0:
         msg = (
             f"Blank channels are written as NaNs, which integer output data "
             f"({new_header['BITPIX']=}) cannot hold. Pass float_length=32 or 64."
@@ -1060,6 +1138,7 @@ async def combine_fits_coro(
                 file_list=file_list,
                 bounding_box=final_bounding_box,
                 invalidate_zeros=invalidate_zeros,
+                blank_channel=bool(zero_beam_idx[new_channel]),
             )
             coros.append(coro)
 
@@ -1194,6 +1273,13 @@ def get_parser(
         help="Set pixels whose values are exactly zero to NaNs",
     )
     parser.add_argument(
+        "--no-blank-zero-beams",
+        action="store_true",
+        help="Keep images whose restoring beam is exactly zero. By default such "
+        "images are blanked with NaNs, as a zero beam means no PSF was fitted for "
+        "that plane (e.g. a wsclean model image planted by -fit-spectral-pol)",
+    )
+    parser.add_argument(
         "--floating",
         type=int,
         choices=(8, 16, 32, 64),
@@ -1256,6 +1342,7 @@ def cli(args: argparse.Namespace | None = None) -> None:
         bounding_box=args.bounding_box,
         invalidate_zeros=args.invalidate_zeros,
         float_length=args.floating,
+        blank_zero_beams=not args.no_blank_zero_beams,
     )
 
     if args.compress:
