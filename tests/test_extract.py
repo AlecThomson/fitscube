@@ -7,17 +7,25 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.exceptions import ChannelMissingException, TargetAxisMissingException
+from fitscube.exceptions import (
+    ChannelMissingException,
+    ShapeMismatchException,
+    TargetAxisMissingException,
+)
 from fitscube.extract import (
     ExtractOptions,
+    ExtractPlanesOptions,
     TargetIndex,
     _check_extract_mode,
+    count_cube_planes,
     create_plane_target_wcs,
     create_target_index,
     extract_plane_from_cube,
+    extract_planes_from_cube,
     find_target_axis,
     fits_file_contains_beam_table,
     get_output_path,
+    read_beam_table,
     update_header_for_target_axis,
 )
 
@@ -248,3 +256,86 @@ def test_extract_time_cube(timecube_path, tmpdir) -> None:
         fits_cube=timecube_path, extract_options=extract_options
     )
     assert timecube.exists()
+
+
+def test_count_cube_planes(cube_path) -> None:
+    """The channel count comes off the frequency axis"""
+    header = fits.getheader(cube_path)
+    assert count_cube_planes(header=header) == header["NAXIS3"]
+
+
+def test_read_beam_table(cube_path, tmpdir) -> None:
+    """A cube with a beam table hands back one beam per channel"""
+    with fits.open(cube_path) as open_fits:
+        beams = read_beam_table(open_fits=open_fits)
+        assert beams is not None
+        assert len(beams.major) == open_fits[0].header["NAXIS3"]
+
+    # A cube that does not claim a beam table has none to read
+    no_table = Path(tmpdir) / "no_table.fits"
+    with fits.open(cube_path) as open_fits:
+        header = open_fits[0].header.copy()
+        del header["CASAMBM"]
+        fits.writeto(no_table, data=open_fits[0].data, header=header)
+
+    with fits.open(no_table) as open_fits:
+        assert read_beam_table(open_fits=open_fits) is None
+
+
+def test_extract_planes_matches_single_plane(cube_path, tmpdir) -> None:
+    """Extracting every plane at once must give exactly what extracting them
+    one at a time does, beam table and all"""
+    tmp_path = Path(tmpdir)
+    channels = count_cube_planes(header=fits.getheader(cube_path))
+
+    one_at_a_time = [
+        extract_plane_from_cube(
+            fits_cube=cube_path,
+            extract_options=ExtractOptions(
+                channel_index=channel,
+                output_path=tmp_path / f"single.{channel}.fits",
+                overwrite=True,
+            ),
+        )
+        for channel in range(channels)
+    ]
+
+    all_at_once = extract_planes_from_cube(
+        cube_path,
+        ExtractPlanesOptions(
+            overwrite=True,
+            output_paths=[
+                tmp_path / f"batch.{channel}.fits" for channel in range(channels)
+            ],
+        ),
+    )
+
+    assert len(all_at_once) == channels
+    for single, batch in zip(one_at_a_time, all_at_once, strict=True):
+        assert np.array_equal(fits.getdata(single), fits.getdata(batch))
+        single_header, batch_header = fits.getheader(single), fits.getheader(batch)
+        assert set(single_header) == set(batch_header)
+        for key in single_header:
+            assert single_header[key] == batch_header[key], f"{key} differs"
+
+
+def test_extract_planes_default_paths(cube_path) -> None:
+    """Without output paths the planes are named after the cube"""
+    channels = count_cube_planes(header=fits.getheader(cube_path))
+
+    planes = extract_planes_from_cube(cube_path, ExtractPlanesOptions(overwrite=True))
+
+    assert len(planes) == channels
+    assert all(plane.exists() for plane in planes)
+    assert planes[0] == get_output_path(
+        input_path=cube_path, target_index=create_target_index(channel_index=0)
+    )
+
+
+def test_extract_planes_output_path_count(cube_path, tmpdir) -> None:
+    """One output path per channel, or none at all"""
+    with pytest.raises(ShapeMismatchException):
+        extract_planes_from_cube(
+            cube_path,
+            ExtractPlanesOptions(output_paths=[Path(tmpdir) / "only_one.fits"]),
+        )
