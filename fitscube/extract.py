@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,12 @@ import numpy as np
 from astropy.io import fits
 from radio_beam import Beam, Beams
 
-from fitscube.exceptions import ChannelMissingException, TargetAxisMissingException
+from fitscube.asyncio import gather_with_limit, sync_wrapper
+from fitscube.exceptions import (
+    ChannelMissingException,
+    ShapeMismatchException,
+    TargetAxisMissingException,
+)
 from fitscube.logging import logger, set_verbosity
 
 
@@ -29,6 +35,20 @@ class ExtractOptions:
     """overwrite the output file, if it exists"""
     output_path: Path | None = None
     """The output path of the new file. If None it is generated from the name of base fits cube."""
+
+
+@dataclass
+class ExtractPlanesOptions:
+    """Options to extract every plane of a cube at once"""
+
+    hdu_index: int = 0
+    """The HDU in the fits cube to access (e.g. for header and data)"""
+    overwrite: bool = False
+    """overwrite the output files, if they exist"""
+    output_paths: list[Path] | None = None
+    """The output path of each plane, in channel order. If None they are generated from the name of the base fits cube."""
+    max_workers: int | None = 4
+    """The number of planes written at once. None places no limit."""
 
 
 @dataclass
@@ -377,6 +397,134 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     )
 
     return output_path
+
+
+def count_cube_planes(header: fits.header.Header) -> int:
+    """The number of channels along the frequency axis of a cube"""
+    return int(header[f"NAXIS{find_target_axis(header=header).axis}"])
+
+
+def read_beam_table(open_fits: fits.HDUList, hdu_index: int = 0) -> Beams | None:
+    """The per-channel beams of an open cube, if it carries a beam table.
+
+    Args:
+        open_fits (fits.HDUList): The already open cube
+        hdu_index (int, optional): The HDU whose header names the beam table. Defaults to 0.
+
+    Returns:
+        Beams | None: One beam per channel, or None when there is no table to read
+    """
+    if not fits_file_contains_beam_table(header=open_fits[hdu_index].header):
+        return None
+
+    if "BEAMS" not in open_fits:
+        logger.warning("Header sets CASAMBM but the file carries no BEAMS table")
+        return None
+
+    return Beams.from_fits_bintable(open_fits["BEAMS"])
+
+
+def _plane_header(
+    header: fits.header.Header,
+    target_wcs: TargetWCS,
+    channel_index: int,
+    beams: Beams | None,
+) -> fits.header.Header:
+    """The header of a single extracted channel, beam included"""
+    out_header = update_header_for_target_axis(
+        header=header,
+        target_wcs=target_wcs,
+        target_index=create_target_index(channel_index=channel_index),
+    )
+    if beams is not None:
+        beam = beams[channel_index]
+        out_header["BMAJ"] = beam.major.to(u.deg).value
+        out_header["BMIN"] = beam.minor.to(u.deg).value
+        out_header["BPA"] = beam.pa.to(u.deg).value
+
+    # A plane holds the one channel, so its beam is the BMAJ/BMIN/BPA above
+    out_header.pop("CASAMBM", None)
+
+    return out_header
+
+
+async def extract_planes_from_cube_coro(
+    fits_cube: Path, extract_planes_options: ExtractPlanesOptions | None = None
+) -> list[Path]:
+    """Extract every channel of a cube into its own file.
+
+    Calling ``extract_plane_from_cube`` once per channel reopens the cube and
+    re-reads its whole beam table each time, which grows with the square of the
+    channel count. Here the cube is opened and the beam table read once.
+
+    Args:
+        fits_cube (Path): The base fits cube to draw from
+        extract_planes_options (ExtractPlanesOptions | None, optional): Options to drive the extraction. Defaults to ExtractPlanesOptions().
+
+    Raises:
+        ShapeMismatchException: If the supplied output paths do not match the channel count
+
+    Returns:
+        list[Path]: The output file of each channel, in channel order
+    """
+    options = extract_planes_options or ExtractPlanesOptions()
+
+    logger.info(f"Opening {fits_cube=}")
+    with fits.open(
+        name=fits_cube, mode="readonly", memmap=True, lazy_load_hdus=True
+    ) as open_fits:
+        header = open_fits[options.hdu_index].header
+        data = open_fits[options.hdu_index].data
+        target_wcs = find_target_axis(header=header)
+        channels = count_cube_planes(header=header)
+        # The FITS axis order is reversed against the numpy one
+        cube_axis = data.ndim - target_wcs.axis
+        beams = read_beam_table(open_fits=open_fits, hdu_index=options.hdu_index)
+
+        if options.output_paths is None:
+            output_paths = [
+                get_output_path(
+                    input_path=fits_cube,
+                    target_index=create_target_index(channel_index=channel),
+                )
+                for channel in range(channels)
+            ]
+        elif len(options.output_paths) != channels:
+            msg = (
+                f"Have {len(options.output_paths)} output paths for a cube of "
+                f"{channels} channels"
+            )
+            raise ShapeMismatchException(msg)
+        else:
+            output_paths = options.output_paths
+
+        def _write_plane(channel: int) -> None:
+            plane = np.expand_dims(
+                np.take(data, channel, axis=cube_axis), axis=cube_axis
+            )
+            fits.writeto(
+                output_paths[channel],
+                data=plane,
+                header=_plane_header(
+                    header=header,
+                    target_wcs=target_wcs,
+                    channel_index=channel,
+                    beams=beams,
+                ),
+                overwrite=options.overwrite,
+            )
+
+        logger.info(f"Extracting {channels} planes from {fits_cube}")
+        await gather_with_limit(
+            options.max_workers,
+            *(asyncio.to_thread(_write_plane, channel) for channel in range(channels)),
+            desc="Extracting planes",
+        )
+
+    return output_paths
+
+
+extract_planes_from_cube = sync_wrapper(extract_planes_from_cube_coro)
 
 
 def get_parser(parser: ArgumentParser | None = None) -> ArgumentParser:
