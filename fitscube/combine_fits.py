@@ -814,48 +814,22 @@ def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
-def get_polarisation(header: fits.Header) -> int:
-    """Get the polarisation axis.
-
-    Args:
-        header (fits.Header): Primary header
-
-    Returns:
-        int: Polarisation axis (in FITS)
-    """
-    wcs = WCS(header)
-    array_shape = wcs.array_shape
-    if array_shape is None:
-        msg = "WCS does not have an array shape"
-        raise ValueError(msg)
-
-    for _, (ctype, naxis, crval) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crval, strict=False)
-    ):
-        if ctype == "STOKES":
-            assert naxis <= 1, (
-                f"Only one polarisation axis is supported - found {naxis}"
-            )
-            # FITS Stokes codes are 1=I, 2=Q, 3=U, 4=V; the BEAMS table POL
-            # column is 0-indexed, so subtract 1.
-            return int(crval - 1)
-    return 0
-
-
-def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
+def make_beam_table(beams: Beams) -> fits.BinTableHDU:
     """Make a beam table.
+
+    CHAN and POL are 0-based indices into the output cube's frequency and
+    Stokes axes (CASA convention), not FITS Stokes codes. The output cube has
+    a single Stokes plane, so POL is always 0.
 
     Args:
         beams (Beams): Beams object
-        header (fits.Header): Old header to infer polarisation
 
     Returns:
         fits.BinTableHDU: Beam table
     """
     nchan = len(beams.major)
     chans = np.arange(nchan)
-    pol = get_polarisation(old_header)
-    pols = np.ones(nchan, dtype=int) * pol
+    pols = np.zeros(nchan, dtype=int)
     tiny = np.finfo(np.float32).tiny
     # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
     # the sentinel below exists to keep out of the table. NaN them first so they
@@ -1146,8 +1120,7 @@ async def combine_fits_coro(
 
     # Handle beams
     if has_beams and not single_beam:
-        old_header = fits.getheader(file_list[0])
-        beam_table_hdu = make_beam_table(beams, old_header)
+        beam_table_hdu = make_beam_table(beams)
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(

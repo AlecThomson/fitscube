@@ -9,17 +9,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.time import Time
-from fitscube.combine_fits import check_for_any_beam, combine_fits, get_polarisation
-
-
-@pytest.mark.filterwarnings("ignore:'datfix' made the change")
-def test_get_polarisation_uses_crval(headers: dict[str, str]) -> None:
-    """POL must track CRVAL4 (the actual Stokes code)"""
-    header = fits.Header.fromstring(headers["beams"])
-    assert get_polarisation(header) == 0  # CRVAL4 == 1.0 -> Stokes I
-
-    header["CRVAL4"] = 2.0  # Stokes Q
-    assert get_polarisation(header) == 1
+from fitscube.combine_fits import check_for_any_beam, combine_fits
 
 
 def test_check_for_any_beams_no_beams(file_list) -> None:
@@ -58,16 +48,15 @@ def test_combine_beam_not_in_first_file(
 
 
 @pytest.mark.parametrize(
-    ("stokes_code", "expected_pol"),
-    [(1, 0), (2, 1), (3, 2), (4, 3)],  # I, Q, U, V
+    "stokes_code",
+    [1, 2, 3, 4],  # I, Q, U, V
 )
-def test_combine_beam_polarisation_matches_stokes(
+def test_combine_beam_pol_is_zero_index_for_single_stokes(
     tmp_path: Path,
     even_specs: u.Quantity,
     stokes_code: int,
-    expected_pol: int,
 ) -> None:
-    """Each Stokes plane's own beam table must carry its own POL, not always 0."""
+    """POL/CHAN are 0-based axis indices, not FITS Stokes codes."""
     image = np.ones((1, 1, 10, 10))
     file_list = []
     for i, spec in enumerate(even_specs):
@@ -103,4 +92,7 @@ def test_combine_beam_polarisation_matches_stokes(
     with fits.open(out_cube) as hdul:
         assert hdul[0].header["CRVAL4"] == stokes_code
         assert hdul[1].name == "BEAMS"
-        assert set(hdul[1].data["POL"].tolist()) == {expected_pol}
+        assert hdul[0].header["NAXIS3"] == len(even_specs)
+        assert hdul[0].header["NAXIS4"] == 1
+        assert np.all(hdul[1].data["POL"] == 0)
+        assert np.array_equal(hdul[1].data["CHAN"], np.arange(len(even_specs)))
