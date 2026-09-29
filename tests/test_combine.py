@@ -9,7 +9,17 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.time import Time
-from fitscube.combine_fits import check_for_any_beam, combine_fits
+from fitscube.combine_fits import check_for_any_beam, combine_fits, get_polarisation
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_get_polarisation_is_axis_index(headers: dict[str, str]) -> None:
+    """POL is the 0-based index along the Stokes axis, not the Stokes code"""
+    header = fits.Header.fromstring(headers["beams"])
+    assert get_polarisation(header) == 0  # CRVAL4 == 1.0 -> Stokes I
+
+    header["CRVAL4"] = 3.0  # Stokes U, still a single plane
+    assert get_polarisation(header) == 0
 
 
 def test_check_for_any_beams_no_beams(file_list) -> None:

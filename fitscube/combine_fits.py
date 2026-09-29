@@ -814,22 +814,50 @@ def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
-def make_beam_table(beams: Beams) -> fits.BinTableHDU:
+def get_polarisation(header: fits.Header) -> int:
+    """Get the 0-based index of the polarisation plane along the Stokes axis.
+
+    This is the value the CASA beam table expects in its POL column: an index
+    into the cube's Stokes axis, not a FITS Stokes code (1=I, 2=Q, 3=U, 4=V).
+    Only a single Stokes plane is supported, so the index is always 0.
+
+    Args:
+        header (fits.Header): Primary header
+
+    Returns:
+        int: 0-based index along the Stokes axis
+    """
+    wcs = WCS(header)
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
+
+    for ctype, naxis in zip(wcs.axis_type_names, array_shape[::-1], strict=False):
+        if ctype == "STOKES":
+            assert naxis <= 1, (
+                f"Only one polarisation axis is supported - found {naxis}"
+            )
+    return 0
+
+
+def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     """Make a beam table.
 
-    CHAN and POL are 0-based indices into the output cube's frequency and
-    Stokes axes (CASA convention), not FITS Stokes codes. The output cube has
-    a single Stokes plane, so POL is always 0.
+    CHAN and POL are 0-based indices into the cube's frequency and Stokes axes
+    (CASA convention), not FITS Stokes codes.
 
     Args:
         beams (Beams): Beams object
+        old_header (fits.Header): Old header to infer polarisation index
 
     Returns:
         fits.BinTableHDU: Beam table
     """
     nchan = len(beams.major)
     chans = np.arange(nchan)
-    pols = np.zeros(nchan, dtype=int)
+    pol = get_polarisation(old_header)
+    pols = np.ones(nchan, dtype=int) * pol
     tiny = np.finfo(np.float32).tiny
     # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
     # the sentinel below exists to keep out of the table. NaN them first so they
@@ -1120,7 +1148,8 @@ async def combine_fits_coro(
 
     # Handle beams
     if has_beams and not single_beam:
-        beam_table_hdu = make_beam_table(beams)
+        old_header = fits.getheader(file_list[0])
+        beam_table_hdu = make_beam_table(beams, old_header)
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(
