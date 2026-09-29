@@ -8,12 +8,6 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Fixed
-
-- The `BEAMS` table `POL` column is now the 0-based index along the cube's
-  Stokes axis (always 0 for a single-Stokes cube) rather than being derived
-  from the Stokes code, which made CARTA refuse to open the file
-
 ## [0.2.2] - 2023-02-28
 
 ### Added
