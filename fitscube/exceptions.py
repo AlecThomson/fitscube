@@ -17,6 +17,14 @@ class ShapeMismatchException(FITSCubeException):
     """Input images do not share a common pixel grid"""
 
 
+class AxisMismatchException(FITSCubeException):
+    """Input images do not share the same axes, in the same order"""
+
+
+class StokesMismatchException(FITSCubeException):
+    """Input images do not share the same Stokes parameter"""
+
+
 class AxisOrderException(FITSCubeException):
     """The spectral axis is not the slowest-varying axis of the cube"""
 

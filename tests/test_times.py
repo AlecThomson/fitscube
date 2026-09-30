@@ -10,7 +10,9 @@ from fitscube.combine_fits import combine_fits, parse_specs
 
 
 def test_parse_specs(file_list: list[Path], even_specs: u.Quantity):
-    file_specs, specs, missing_chan_idx = parse_specs(file_list, time_domain_mode=True)
+    file_specs, _specs, _missing_chan_idx = parse_specs(
+        file_list, time_domain_mode=True
+    )
     # assert np.array_equal(file_specs, even_specs)
     assert np.allclose(file_specs, even_specs, rtol=1e-10, atol=1e-9)
 

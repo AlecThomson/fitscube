@@ -4,6 +4,8 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid (checked, see `check_matching_shapes`)
+- All files have the same axes, in the same order, and the same Stokes parameter
+  (checked, see `check_matching_axes`)
 - All the relevant information is in the first header of the first image
 - Frequency is either a WCS axis or in the REFFREQ header keyword OR
 - Time is present in the DATE-OBS header keyword for time-domain-mode
@@ -24,11 +26,12 @@ from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
+from astropy.coordinates import StokesCoord
 from astropy.io import fits
 from astropy.io.fits.verify import VerifyWarning
 from astropy.table import Table
 from astropy.time import Time
-from astropy.wcs import WCS
+from astropy.wcs import WCS, WCSSUB_STOKES
 from numpy.typing import ArrayLike, NDArray
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
@@ -40,9 +43,11 @@ from fitscube.bounding_box import (
     get_common_bounding_box_coro,
 )
 from fitscube.exceptions import (
+    AxisMismatchException,
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
+    StokesMismatchException,
 )
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
@@ -134,6 +139,66 @@ async def write_channel_to_cube_coro(
 write_channel_to_cube = sync_wrapper(write_channel_to_cube_coro)
 
 
+async def read_headers_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> list[fits.Header]:
+    """Read the primary header of every input image, without its data.
+
+    Args:
+        file_list (list[Path]): The FITS images to read
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Returns:
+        list[fits.Header]: One header per image, in ``file_list`` order
+    """
+    return await gather_with_limit(
+        max_workers,
+        *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
+        desc="Reading headers",
+    )
+
+
+def check_values_match(
+    file_list: list[Path],
+    values: list[T],
+    describe: Callable[[T], str],
+    requirement: str,
+    exception: type[Exception],
+) -> T:
+    """Check that every input has the same value as the first.
+
+    Args:
+        file_list (list[Path]): The FITS images the values came from
+        values (list[T]): One value per image
+        describe (Callable[[T], str]): Describes a value for the error message
+        requirement (str): What the inputs must share, for the error message
+        exception (type[Exception]): Raised when any value differs from the first
+
+    Returns:
+        T: The common value
+    """
+    expected = values[0]
+    offenders = [
+        f"{fits_path} has {describe(value)}"
+        for fits_path, value in zip(file_list, values, strict=True)
+        if value != expected
+    ]
+    if offenders:
+        # Keep the message readable when a whole run is mismatched
+        max_shown = 10
+        shown = offenders[:max_shown]
+        if len(offenders) > len(shown):
+            shown.append(f"...and {len(offenders) - len(shown)} more")
+        listing = "\n".join(shown)
+        msg = (
+            f"All input images must share {requirement}. Expected "
+            f"{describe(expected)} from {file_list[0]}, but found:\n{listing}"
+        )
+        raise exception(msg)
+    return expected
+
+
 async def check_matching_shapes_coro(
     file_list: list[Path],
     max_workers: int | None = None,
@@ -154,34 +219,59 @@ async def check_matching_shapes_coro(
     Returns:
         tuple[int, int]: The common (NAXIS1, NAXIS2)
     """
-    headers = await gather_with_limit(
-        max_workers,
-        *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
-        desc="Checking shapes",
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    return check_values_match(
+        file_list,
+        [(header["NAXIS1"], header["NAXIS2"]) for header in headers],
+        describe=lambda shape: f"(NAXIS1, NAXIS2)={shape}",
+        requirement="the same pixel grid",
+        exception=ShapeMismatchException,
     )
-    shapes = [(header["NAXIS1"], header["NAXIS2"]) for header in headers]
-    expected = shapes[0]
-    offenders = [
-        f"{fits_path} has (NAXIS1, NAXIS2)={shape}"
-        for fits_path, shape in zip(file_list, shapes, strict=False)
-        if shape != expected
-    ]
-    if offenders:
-        # Keep the message readable when a whole run is mismatched
-        shown = offenders[:10]
-        if len(offenders) > len(shown):
-            shown.append(f"...and {len(offenders) - len(shown)} more")
-        listing = "\n".join(shown)
-        msg = (
-            "All input images must share the same pixel grid. Expected "
-            f"(NAXIS1, NAXIS2)={expected} from {file_list[0]}, but found:\n{listing}"
-        )
-        raise ShapeMismatchException(msg)
-
-    return expected
 
 
 check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
+
+
+async def check_matching_axes_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> None:
+    """Confirm every input image has the same axes and Stokes parameter.
+
+    The cube's header is taken from the first input, so an input with other
+    axes (e.g. RA/DEC swapped, or an extra axis) or another Stokes parameter
+    would be silently mislabelled.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        AxisMismatchException: If any image's axis types or their order differ from the first
+        StokesMismatchException: If any image differs in Stokes from the first
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    check_values_match(
+        file_list,
+        [get_axis_types(header) for header in headers],
+        describe=lambda ctypes: f"axes {ctypes}",
+        requirement="the same axes, in the same order",
+        exception=AxisMismatchException,
+    )
+    check_values_match(
+        file_list,
+        [get_stokes_codes(header) for header in headers],
+        describe=lambda codes: (
+            "no Stokes axis"
+            if codes is None
+            else f"Stokes {StokesCoord(list(codes)).symbol.tolist()} (codes {codes})"
+        ),
+        requirement="the same Stokes parameter",
+        exception=StokesMismatchException,
+    )
+
+
+check_matching_axes = sync_wrapper(check_matching_axes_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -337,7 +427,7 @@ async def create_cube_from_scratch_coro(
 
     header.tofile(output_file, overwrite=overwrite)
 
-    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
+    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]))
     msg = f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}"
     logger.info(msg)
     if bytes_per_value is None:
@@ -418,7 +508,11 @@ async def create_output_cube_coro(
         diff_time = np.diff(sorted_specs)
         diff_diff_time = np.diff(diff_time)
         running_deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
-        even_spec = np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
+        # Fewer than three times have no second difference, and are always
+        # evenly spaced
+        even_spec = len(diff_diff_time) == 0 or bool(
+            np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
+        )
 
         # This is a simpler way where no attempt is made to ensure the total
         # error on the irregular steps accumulates and violates the regular
@@ -814,48 +908,99 @@ def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
-def get_polarisation(header: fits.Header) -> int:
-    """Get the polarisation axis.
+def _stokes_wcs(header: fits.Header) -> WCS | None:
+    """Get the Stokes axis of an image as a 1D WCS.
 
     Args:
-        header (fits.Header): Primary header
+        header (fits.Header): Primary header of an image
 
     Returns:
-        int: Polarisation axis (in FITS)
+        WCS | None: The Stokes axis alone, or None if there is no Stokes axis
     """
     wcs = WCS(header)
-    array_shape = wcs.array_shape
-    if array_shape is None:
+    if wcs.array_shape is None:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
 
-    for _, (ctype, naxis, crval) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], wcs.wcs.crval, strict=False)
-    ):
-        if ctype == "STOKES":
-            assert naxis <= 1, (
-                f"Only one polarisation axis is supported - found {naxis}"
-            )
-            # FITS Stokes codes are 1=I, 2=Q, 3=U, 4=V; the BEAMS table POL
-            # column is 0-indexed, so subtract 1.
-            return int(crval - 1)
-    return 0
+    stokes_wcs = wcs.sub([WCSSUB_STOKES])
+    return stokes_wcs if stokes_wcs.naxis else None
 
 
-def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
-    """Make a beam table.
+def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
+    """Get the 0-based plane indices along the Stokes axis.
+
+    These are the values the CASA beam table expects in its POL column: indices
+    into the cube's Stokes axis, not FITS Stokes codes (see `get_stokes_codes`).
 
     Args:
-        beams (Beams): Beams object
-        header (fits.Header): Old header to infer polarisation
+        header (fits.Header): Primary header of the cube
+
+    Returns:
+        NDArray[np.int_]: ``arange(n_stokes)``, or ``[0]`` if there is no Stokes axis
+    """
+    stokes_wcs = _stokes_wcs(header)
+    # CASA counts an image without a Stokes axis as one Stokes plane in its beam set
+    n_stokes = 1 if stokes_wcs is None else stokes_wcs.pixel_shape[0]
+    return np.arange(n_stokes)
+
+
+def get_axis_types(header: fits.Header) -> tuple[str, ...]:
+    """Get the CTYPE of every axis of an image, in FITS axis order.
+
+    Args:
+        header (fits.Header): Primary header of an image
+
+    Returns:
+        tuple[str, ...]: One CTYPE per axis, "" where an axis has none
+    """
+    return tuple(
+        str(header.get(f"CTYPE{axis}", "")).strip()
+        for axis in range(1, header["NAXIS"] + 1)
+    )
+
+
+def get_stokes_codes(header: fits.Header) -> tuple[int, ...] | None:
+    """Get the FITS Stokes code of each plane along the Stokes axis.
+
+    The codes are those of `astropy.coordinates.StokesCoord`, e.g. 1..4 for
+    I, Q, U, V (see ``astropy.coordinates.polarization.FITS_STOKES_VALUE_SYMBOL_MAP``).
+
+    Args:
+        header (fits.Header): Primary header of an image
+
+    Returns:
+        tuple[int, ...] | None: One code per Stokes plane, or None if there is no Stokes axis
+    """
+    stokes_wcs = _stokes_wcs(header)
+    if stokes_wcs is None:
+        return None
+    stokes: StokesCoord = stokes_wcs.pixel_to_world(
+        np.arange(stokes_wcs.pixel_shape[0])
+    )
+    return tuple(int(code) for code in np.round(stokes.value))
+
+
+def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
+    """Make a beam table.
+
+    CHAN and POL are 0-based indices into the cube's frequency and Stokes axes
+    (CASA convention), not FITS Stokes codes.
+
+    Args:
+        beams (Beams): One beam per output channel
+        cube_header (fits.Header): Header of the output cube, used to find the
+            Stokes axis
 
     Returns:
         fits.BinTableHDU: Beam table
     """
+    stokes_idx = get_polarisation(cube_header)
+    if len(stokes_idx) != 1:
+        msg = f"Only single-Stokes cubes are supported - found {len(stokes_idx)} Stokes planes"
+        raise NotImplementedError(msg)
     nchan = len(beams.major)
     chans = np.arange(nchan)
-    pol = get_polarisation(old_header)
-    pols = np.ones(nchan, dtype=int) * pol
+    pols = np.full(nchan, stokes_idx[0])
     tiny = np.finfo(np.float32).tiny
     # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
     # the sentinel below exists to keep out of the table. NaN them first so they
@@ -880,7 +1025,7 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     tab_header = tab_hdu.header
     tab_header["EXTNAME"] = "BEAMS"
     tab_header["NCHAN"] = nchan
-    tab_header["NPOL"] = 1  # Only one pol for now
+    tab_header["NPOL"] = len(stokes_idx)
 
     return tab_hdu
 
@@ -1007,6 +1152,7 @@ async def combine_fits_coro(
     # TODO: Check that all files have the same WCS
 
     await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
+    await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
@@ -1104,6 +1250,12 @@ async def combine_fits_coro(
         )
         raise ValueError(msg)
 
+    # Build the beam table before writing any data, so an unsupported cube
+    # (e.g. multi-Stokes) fails before the planes are copied in
+    beam_table_hdu = (
+        make_beam_table(beams, new_header) if has_beams and not single_beam else None
+    )
+
     new_channels = np.arange(len(specs))
     old_channels = np.arange(len(file_specs))
 
@@ -1145,9 +1297,7 @@ async def combine_fits_coro(
         await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
-    if has_beams and not single_beam:
-        old_header = fits.getheader(file_list[0])
-        beam_table_hdu = make_beam_table(beams, old_header)
+    if beam_table_hdu is not None:
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(

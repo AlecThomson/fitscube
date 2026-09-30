@@ -9,17 +9,40 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.time import Time
-from fitscube.combine_fits import check_for_any_beam, combine_fits, get_polarisation
+from fitscube.combine_fits import (
+    check_for_any_beam,
+    combine_fits,
+    get_polarisation,
+    make_beam_table,
+)
+from radio_beam import Beams
 
 
 @pytest.mark.filterwarnings("ignore:'datfix' made the change")
-def test_get_polarisation_uses_crval(headers: dict[str, str]) -> None:
-    """POL must track CRVAL4 (the actual Stokes code)"""
+def test_get_polarisation_is_axis_index(headers: dict[str, str]) -> None:
+    """POL values are 0-based indices along the Stokes axis, not Stokes codes"""
     header = fits.Header.fromstring(headers["beams"])
-    assert get_polarisation(header) == 0  # CRVAL4 == 1.0 -> Stokes I
+    header["NAXIS4"] = 1
+    header["CRVAL4"] = 3.0  # Stokes U, but a single plane
+    assert get_polarisation(header).tolist() == [0]
 
-    header["CRVAL4"] = 2.0  # Stokes Q
-    assert get_polarisation(header) == 1
+    header["NAXIS4"] = 3
+    assert get_polarisation(header).tolist() == [0, 1, 2]
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_make_beam_table_rejects_multi_stokes(headers: dict[str, str]) -> None:
+    """Multi-Stokes beam tables are not supported yet"""
+    header = fits.Header.fromstring(headers["beams"])
+    header["NAXIS4"] = 3
+    beams = Beams(
+        major=np.ones(4) * u.arcsec,
+        minor=np.ones(4) * u.arcsec,
+        pa=np.zeros(4) * u.deg,
+    )
+
+    with pytest.raises(NotImplementedError):
+        make_beam_table(beams, header)
 
 
 def test_check_for_any_beams_no_beams(file_list) -> None:
@@ -58,16 +81,15 @@ def test_combine_beam_not_in_first_file(
 
 
 @pytest.mark.parametrize(
-    ("stokes_code", "expected_pol"),
-    [(1, 0), (2, 1), (3, 2), (4, 3)],  # I, Q, U, V
+    "stokes_code",
+    [1, 2, 3, 4],  # I, Q, U, V
 )
-def test_combine_beam_polarisation_matches_stokes(
+def test_combine_beam_pol_is_zero_index_for_single_stokes(
     tmp_path: Path,
     even_specs: u.Quantity,
     stokes_code: int,
-    expected_pol: int,
 ) -> None:
-    """Each Stokes plane's own beam table must carry its own POL, not always 0."""
+    """POL/CHAN are 0-based axis indices, not FITS Stokes codes."""
     image = np.ones((1, 1, 10, 10))
     file_list = []
     for i, spec in enumerate(even_specs):
@@ -103,4 +125,7 @@ def test_combine_beam_polarisation_matches_stokes(
     with fits.open(out_cube) as hdul:
         assert hdul[0].header["CRVAL4"] == stokes_code
         assert hdul[1].name == "BEAMS"
-        assert set(hdul[1].data["POL"].tolist()) == {expected_pol}
+        assert hdul[0].header["NAXIS3"] == len(even_specs)
+        assert hdul[0].header["NAXIS4"] == 1
+        assert np.all(hdul[1].data["POL"] == 0)
+        assert np.array_equal(hdul[1].data["CHAN"], np.arange(len(even_specs)))

@@ -9,11 +9,16 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
-from fitscube.combine_fits import check_matching_shapes, combine_fits
+from fitscube.combine_fits import (
+    check_matching_axes,
+    check_matching_shapes,
+    combine_fits,
+)
 from fitscube.exceptions import (
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
+    StokesMismatchException,
 )
 
 
@@ -94,6 +99,31 @@ def test_mismatched_shapes_raise(
 
 def test_check_matching_shapes(file_list: list[Path]) -> None:
     assert check_matching_shapes(file_list=file_list) == (8, 8)
+
+
+def test_check_matching_axes(file_list: list[Path]) -> None:
+    for path in file_list:
+        fits.setval(path, "CRVAL3", value=3.0)  # Stokes U
+    check_matching_axes(file_list=file_list)
+
+
+def test_check_matching_axes_compares_stokes_codes_not_keywords(
+    file_list: list[Path],
+) -> None:
+    """CRVAL3=2 at CRPIX3=2 is still Stokes I at the (only) first pixel"""
+    fits.setval(file_list[-1], "CRVAL3", value=2.0)
+    fits.setval(file_list[-1], "CRPIX3", value=2.0)
+    check_matching_axes(file_list=file_list)
+
+
+def test_mismatched_stokes_raise(tmp_path: Path, file_list: list[Path]) -> None:
+    """A Q plane among I planes would be mislabelled as I in the cube"""
+    fits.setval(file_list[2], "CRVAL3", value=2.0)  # Stokes Q
+    out_cube = tmp_path / "cube.fits"
+
+    with pytest.raises(StokesMismatchException, match=file_list[2].name):
+        combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+    assert not out_cube.exists()
 
 
 def test_spectral_axis_must_be_slowest(tmp_path: Path, specs: u.Quantity) -> None:
