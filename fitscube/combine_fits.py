@@ -4,8 +4,8 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid (checked, see `check_matching_shapes`)
-- All files have the same axes, in the same order (checked, see `check_matching_axes`)
-- All files have the same Stokes parameter (checked, see `check_matching_stokes`)
+- All files have the same axes, in the same order, and the same Stokes parameter
+  (checked, see `check_matching_axes`)
 - All the relevant information is in the first header of the first image
 - Frequency is either a WCS axis or in the REFFREQ header keyword OR
 - Time is present in the DATE-OBS header keyword for time-domain-mode
@@ -159,7 +159,7 @@ async def read_headers_coro(
     )
 
 
-def _require_matching(
+def check_values_match(
     file_list: list[Path],
     values: list[T],
     describe: Callable[[T], str],
@@ -199,68 +199,15 @@ def _require_matching(
     return expected
 
 
-def _matching_shape(
-    file_list: list[Path], headers: list[fits.Header]
-) -> tuple[int, int]:
-    # Planes are written to the cube at a fixed byte offset per channel, so
-    # inputs of differing shape would silently slide against each other and
-    # produce a scrambled cube with a self-consistent header.
-    return _require_matching(
-        file_list,
-        [(header["NAXIS1"], header["NAXIS2"]) for header in headers],
-        describe=lambda shape: f"(NAXIS1, NAXIS2)={shape}",
-        requirement="the same pixel grid",
-        exception=ShapeMismatchException,
-    )
-
-
-def _matching_axes(
-    file_list: list[Path], headers: list[fits.Header]
-) -> tuple[str, ...]:
-    # The cube's header comes from the first input, so an input with other
-    # axes (e.g. RA/DEC swapped, or an extra axis) would be mislabelled.
-    return _require_matching(
-        file_list,
-        [get_axis_types(header) for header in headers],
-        describe=lambda ctypes: f"axes {ctypes}",
-        requirement="the same axes, in the same order",
-        exception=AxisMismatchException,
-    )
-
-
-def _matching_stokes(
-    file_list: list[Path], headers: list[fits.Header]
-) -> tuple[int, ...] | None:
-    # The cube's header comes from the first input, so an input with a
-    # different Stokes parameter would be mislabelled.
-    return _require_matching(
-        file_list,
-        [get_stokes_codes(header) for header in headers],
-        describe=lambda codes: f"Stokes {_describe_stokes(codes)}",
-        requirement="the same Stokes parameter",
-        exception=StokesMismatchException,
-    )
-
-
-def _describe_stokes(codes: tuple[int, ...] | None) -> str:
-    """Name the Stokes parameters of an image for an error message.
-
-    Args:
-        codes (tuple[int, ...] | None): FITS Stokes codes, or None if there is no Stokes axis
-
-    Returns:
-        str: e.g. ``['I'] (codes (1,))``, or a note that there is no Stokes axis
-    """
-    if codes is None:
-        return "unknown (no Stokes axis)"
-    return f"{StokesCoord(list(codes)).symbol.tolist()} (codes {codes})"
-
-
 async def check_matching_shapes_coro(
     file_list: list[Path],
     max_workers: int | None = None,
 ) -> tuple[int, int]:
     """Confirm every input image shares the same NAXIS1/NAXIS2 pixel grid.
+
+    Planes are written to the cube at a fixed byte offset per channel, so
+    inputs of differing shape would silently slide against each other and
+    produce a scrambled cube with a self-consistent header.
 
     Args:
         file_list (list[Path]): The FITS images to check
@@ -273,7 +220,13 @@ async def check_matching_shapes_coro(
         tuple[int, int]: The common (NAXIS1, NAXIS2)
     """
     headers = await read_headers_coro(file_list, max_workers=max_workers)
-    return _matching_shape(file_list, headers)
+    return check_values_match(
+        file_list,
+        [(header["NAXIS1"], header["NAXIS2"]) for header in headers],
+        describe=lambda shape: f"(NAXIS1, NAXIS2)={shape}",
+        requirement="the same pixel grid",
+        exception=ShapeMismatchException,
+    )
 
 
 check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
@@ -282,73 +235,43 @@ check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
 async def check_matching_axes_coro(
     file_list: list[Path],
     max_workers: int | None = None,
-) -> tuple[str, ...]:
-    """Confirm every input image has the same axis types, in the same order.
+) -> None:
+    """Confirm every input image has the same axes and Stokes parameter.
+
+    The cube's header is taken from the first input, so an input with other
+    axes (e.g. RA/DEC swapped, or an extra axis) or another Stokes parameter
+    would be silently mislabelled.
 
     Args:
         file_list (list[Path]): The FITS images to check
         max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
 
     Raises:
-        AxisMismatchException: If any image's axes differ from the first
-
-    Returns:
-        tuple[str, ...]: The common CTYPE of each axis
+        AxisMismatchException: If any image's axis types or their order differ from the first
+        StokesMismatchException: If any image differs in Stokes from the first
     """
     headers = await read_headers_coro(file_list, max_workers=max_workers)
-    return _matching_axes(file_list, headers)
+    check_values_match(
+        file_list,
+        [get_axis_types(header) for header in headers],
+        describe=lambda ctypes: f"axes {ctypes}",
+        requirement="the same axes, in the same order",
+        exception=AxisMismatchException,
+    )
+    check_values_match(
+        file_list,
+        [get_stokes_codes(header) for header in headers],
+        describe=lambda codes: (
+            "no Stokes axis"
+            if codes is None
+            else f"Stokes {StokesCoord(list(codes)).symbol.tolist()} (codes {codes})"
+        ),
+        requirement="the same Stokes parameter",
+        exception=StokesMismatchException,
+    )
 
 
 check_matching_axes = sync_wrapper(check_matching_axes_coro)
-
-
-async def check_matching_stokes_coro(
-    file_list: list[Path],
-    max_workers: int | None = None,
-) -> tuple[int, ...] | None:
-    """Confirm every input image carries the same Stokes parameter.
-
-    Args:
-        file_list (list[Path]): The FITS images to check
-        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
-
-    Raises:
-        StokesMismatchException: If any image differs in Stokes from the first
-
-    Returns:
-        tuple[int, ...] | None: The common FITS Stokes codes, or None if no input has a Stokes axis
-    """
-    headers = await read_headers_coro(file_list, max_workers=max_workers)
-    return _matching_stokes(file_list, headers)
-
-
-check_matching_stokes = sync_wrapper(check_matching_stokes_coro)
-
-
-async def check_matching_inputs_coro(
-    file_list: list[Path],
-    max_workers: int | None = None,
-) -> None:
-    """Confirm the inputs share a pixel grid, axes and Stokes parameter.
-
-    Each header is read once, and no image data is read.
-
-    Args:
-        file_list (list[Path]): The FITS images to check
-        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
-
-    Raises:
-        ShapeMismatchException: If any image differs in shape from the first
-        AxisMismatchException: If any image's axes differ from the first
-        StokesMismatchException: If any image differs in Stokes from the first
-    """
-    headers = await read_headers_coro(file_list, max_workers=max_workers)
-    _matching_shape(file_list, headers)
-    _matching_axes(file_list, headers)
-    _matching_stokes(file_list, headers)
-
-
-check_matching_inputs = sync_wrapper(check_matching_inputs_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -1228,7 +1151,8 @@ async def combine_fits_coro(
     """
     # TODO: Check that all files have the same WCS
 
-    await check_matching_inputs_coro(file_list=file_list, max_workers=max_workers)
+    await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
+    await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
