@@ -845,8 +845,7 @@ def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
     (CASA convention), not FITS Stokes codes.
 
     Args:
-        beams (Beams): One beam per (channel, Stokes plane), ordered with
-            channel varying slowest and Stokes fastest
+        beams (Beams): One beam per output channel
         cube_header (fits.Header): Header of the output cube, used to find the
             Stokes axis
 
@@ -854,14 +853,12 @@ def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
         fits.BinTableHDU: Beam table
     """
     stokes_idx = get_polarisation(cube_header)
-    npol = len(stokes_idx)
-    nbeams = len(beams.major)
-    if nbeams % npol != 0:
-        msg = f"Got {nbeams} beams, which is not a multiple of the {npol} Stokes planes"
-        raise ValueError(msg)
-    nchan = nbeams // npol
-    chans = np.repeat(np.arange(nchan), npol)
-    pols = np.tile(stokes_idx, nchan)
+    if len(stokes_idx) != 1:
+        msg = f"Only single-Stokes cubes are supported - found {len(stokes_idx)} Stokes planes"
+        raise NotImplementedError(msg)
+    nchan = len(beams.major)
+    chans = np.arange(nchan)
+    pols = np.full(nchan, stokes_idx[0])
     tiny = np.finfo(np.float32).tiny
     # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
     # the sentinel below exists to keep out of the table. NaN them first so they
@@ -886,7 +883,7 @@ def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
     tab_header = tab_hdu.header
     tab_header["EXTNAME"] = "BEAMS"
     tab_header["NCHAN"] = nchan
-    tab_header["NPOL"] = npol
+    tab_header["NPOL"] = len(stokes_idx)
 
     return tab_hdu
 
@@ -1152,8 +1149,7 @@ async def combine_fits_coro(
 
     # Handle beams
     if has_beams and not single_beam:
-        cube_header = fits.getheader(out_cube)
-        beam_table_hdu = make_beam_table(beams, cube_header)
+        beam_table_hdu = make_beam_table(beams, new_header)
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(

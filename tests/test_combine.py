@@ -31,23 +31,18 @@ def test_get_polarisation_is_axis_index(headers: dict[str, str]) -> None:
 
 
 @pytest.mark.filterwarnings("ignore:'datfix' made the change")
-def test_make_beam_table_multi_stokes(headers: dict[str, str]) -> None:
-    """CHAN varies slowest and POL fastest, with NPOL taken from the cube"""
+def test_make_beam_table_rejects_multi_stokes(headers: dict[str, str]) -> None:
+    """Multi-Stokes beam tables are not supported yet"""
     header = fits.Header.fromstring(headers["beams"])
     header["NAXIS4"] = 3
-    nchan, npol = 4, 3
     beams = Beams(
-        major=np.linspace(1, 2, nchan * npol) * u.arcsec,
-        minor=np.ones(nchan * npol) * u.arcsec,
-        pa=np.zeros(nchan * npol) * u.deg,
+        major=np.ones(4) * u.arcsec,
+        minor=np.ones(4) * u.arcsec,
+        pa=np.zeros(4) * u.deg,
     )
 
-    hdu = make_beam_table(beams, header)
-
-    assert hdu.header["NCHAN"] == nchan
-    assert hdu.header["NPOL"] == npol
-    assert hdu.data["CHAN"].tolist() == np.repeat(np.arange(nchan), npol).tolist()
-    assert hdu.data["POL"].tolist() == np.tile(np.arange(npol), nchan).tolist()
+    with pytest.raises(NotImplementedError):
+        make_beam_table(beams, header)
 
 
 def test_check_for_any_beams_no_beams(file_list) -> None:
