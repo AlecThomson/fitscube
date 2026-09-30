@@ -832,7 +832,7 @@ def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
 
-    # A cube without a Stokes axis has a single, implicit Stokes plane
+    # CASA counts an image without a Stokes axis as one Stokes plane in its beam set
     n_stokes = 1
     for ctype, naxis in zip(wcs.axis_type_names, array_shape[::-1], strict=False):
         if ctype == "STOKES":
