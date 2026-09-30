@@ -15,6 +15,7 @@ from fitscube.combine_fits import (
     combine_fits,
 )
 from fitscube.exceptions import (
+    AxisMismatchException,
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
@@ -148,11 +149,11 @@ def test_mismatched_stokes_raise(tmp_path: Path, file_list: list[Path]) -> None:
 
 
 def test_missing_stokes_axis_raises(tmp_path: Path, file_list: list[Path]) -> None:
-    """An input without a Stokes axis has an unknown Stokes, so cannot be mixed in"""
+    """An input without the Stokes axis the others have cannot be mixed in"""
     _drop_stokes_axis(file_list[1])
     out_cube = tmp_path / "cube.fits"
 
-    with pytest.raises(StokesMismatchException, match=file_list[1].name):
+    with pytest.raises(AxisMismatchException, match=file_list[1].name):
         combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
     assert not out_cube.exists()
 

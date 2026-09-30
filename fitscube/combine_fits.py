@@ -4,6 +4,7 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid (checked, see `check_matching_shapes`)
+- All files have the same axes, in the same order (checked, see `check_matching_axes`)
 - All files have the same Stokes parameter (checked, see `check_matching_stokes`)
 - All the relevant information is in the first header of the first image
 - Frequency is either a WCS axis or in the REFFREQ header keyword OR
@@ -42,6 +43,7 @@ from fitscube.bounding_box import (
     get_common_bounding_box_coro,
 )
 from fitscube.exceptions import (
+    AxisMismatchException,
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
@@ -137,67 +139,107 @@ async def write_channel_to_cube_coro(
 write_channel_to_cube = sync_wrapper(write_channel_to_cube_coro)
 
 
-async def check_matching_shapes_coro(
+async def read_headers_coro(
     file_list: list[Path],
     max_workers: int | None = None,
-) -> tuple[int, int]:
-    """Confirm every input image shares the same NAXIS1/NAXIS2 pixel grid.
-
-    Planes are written to the cube at a fixed byte offset per channel, so
-    inputs of differing shape would silently slide against each other and
-    produce a scrambled cube with a self-consistent header.
+) -> list[fits.Header]:
+    """Read the primary header of every input image, without its data.
 
     Args:
-        file_list (list[Path]): The FITS images to check
+        file_list (list[Path]): The FITS images to read
         max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
 
-    Raises:
-        ShapeMismatchException: If any image differs in shape from the first
-
     Returns:
-        tuple[int, int]: The common (NAXIS1, NAXIS2)
+        list[fits.Header]: One header per image, in ``file_list`` order
     """
-    headers = await gather_with_limit(
+    return await gather_with_limit(
         max_workers,
         *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
-        desc="Checking shapes",
+        desc="Reading headers",
     )
-    shapes = [(header["NAXIS1"], header["NAXIS2"]) for header in headers]
-    expected = shapes[0]
+
+
+def _require_matching(
+    file_list: list[Path],
+    values: list[T],
+    describe: Callable[[T], str],
+    requirement: str,
+    exception: type[Exception],
+) -> T:
+    """Check that every input has the same value as the first.
+
+    Args:
+        file_list (list[Path]): The FITS images the values came from
+        values (list[T]): One value per image
+        describe (Callable[[T], str]): Describes a value for the error message
+        requirement (str): What the inputs must share, for the error message
+        exception (type[Exception]): Raised when any value differs from the first
+
+    Returns:
+        T: The common value
+    """
+    expected = values[0]
     offenders = [
-        f"{fits_path} has (NAXIS1, NAXIS2)={shape}"
-        for fits_path, shape in zip(file_list, shapes, strict=False)
-        if shape != expected
+        f"{fits_path} has {describe(value)}"
+        for fits_path, value in zip(file_list, values, strict=True)
+        if value != expected
     ]
     if offenders:
+        # Keep the message readable when a whole run is mismatched
+        max_shown = 10
+        shown = offenders[:max_shown]
+        if len(offenders) > len(shown):
+            shown.append(f"...and {len(offenders) - len(shown)} more")
+        listing = "\n".join(shown)
         msg = (
-            "All input images must share the same pixel grid. Expected "
-            f"(NAXIS1, NAXIS2)={expected} from {file_list[0]}, but found:\n"
-            f"{_format_offenders(offenders)}"
+            f"All input images must share {requirement}. Expected "
+            f"{describe(expected)} from {file_list[0]}, but found:\n{listing}"
         )
-        raise ShapeMismatchException(msg)
-
+        raise exception(msg)
     return expected
 
 
-check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
+def _matching_shape(
+    file_list: list[Path], headers: list[fits.Header]
+) -> tuple[int, int]:
+    # Planes are written to the cube at a fixed byte offset per channel, so
+    # inputs of differing shape would silently slide against each other and
+    # produce a scrambled cube with a self-consistent header.
+    return _require_matching(
+        file_list,
+        [(header["NAXIS1"], header["NAXIS2"]) for header in headers],
+        describe=lambda shape: f"(NAXIS1, NAXIS2)={shape}",
+        requirement="the same pixel grid",
+        exception=ShapeMismatchException,
+    )
 
 
-def _format_offenders(offenders: list[str], max_shown: int = 10) -> str:
-    """List the offending inputs of a failed check, one per line.
+def _matching_axes(
+    file_list: list[Path], headers: list[fits.Header]
+) -> tuple[str, ...]:
+    # The cube's header comes from the first input, so an input with other
+    # axes (e.g. RA/DEC swapped, or an extra axis) would be mislabelled.
+    return _require_matching(
+        file_list,
+        [get_axis_types(header) for header in headers],
+        describe=lambda ctypes: f"axes {ctypes}",
+        requirement="the same axes, in the same order",
+        exception=AxisMismatchException,
+    )
 
-    Args:
-        offenders (list[str]): One description per offending input
-        max_shown (int, optional): Most offenders to list. Defaults to 10.
 
-    Returns:
-        str: The listing, truncated with a count of the rest
-    """
-    # Keep the message readable when a whole run is mismatched
-    shown = offenders[:max_shown]
-    if len(offenders) > len(shown):
-        shown.append(f"...and {len(offenders) - len(shown)} more")
-    return "\n".join(shown)
+def _matching_stokes(
+    file_list: list[Path], headers: list[fits.Header]
+) -> tuple[int, ...] | None:
+    # The cube's header comes from the first input, so an input with a
+    # different Stokes parameter would be mislabelled.
+    return _require_matching(
+        file_list,
+        [get_stokes_codes(header) for header in headers],
+        describe=lambda codes: f"Stokes {_describe_stokes(codes)}",
+        requirement="the same Stokes parameter",
+        exception=StokesMismatchException,
+    )
 
 
 def _describe_stokes(codes: tuple[int, ...] | None) -> str:
@@ -214,15 +256,57 @@ def _describe_stokes(codes: tuple[int, ...] | None) -> str:
     return f"{StokesCoord(list(codes)).symbol.tolist()} (codes {codes})"
 
 
+async def check_matching_shapes_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> tuple[int, int]:
+    """Confirm every input image shares the same NAXIS1/NAXIS2 pixel grid.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        ShapeMismatchException: If any image differs in shape from the first
+
+    Returns:
+        tuple[int, int]: The common (NAXIS1, NAXIS2)
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    return _matching_shape(file_list, headers)
+
+
+check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
+
+
+async def check_matching_axes_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> tuple[str, ...]:
+    """Confirm every input image has the same axis types, in the same order.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        AxisMismatchException: If any image's axes differ from the first
+
+    Returns:
+        tuple[str, ...]: The common CTYPE of each axis
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    return _matching_axes(file_list, headers)
+
+
+check_matching_axes = sync_wrapper(check_matching_axes_coro)
+
+
 async def check_matching_stokes_coro(
     file_list: list[Path],
     max_workers: int | None = None,
 ) -> tuple[int, ...] | None:
     """Confirm every input image carries the same Stokes parameter.
-
-    The output cube takes its header from the first input, so an input with a
-    different Stokes parameter would be silently mislabelled. Only headers are
-    read.
 
     Args:
         file_list (list[Path]): The FITS images to check
@@ -234,30 +318,37 @@ async def check_matching_stokes_coro(
     Returns:
         tuple[int, ...] | None: The common FITS Stokes codes, or None if no input has a Stokes axis
     """
-    headers = await gather_with_limit(
-        max_workers,
-        *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
-        desc="Checking Stokes",
-    )
-    stokes = [get_stokes_codes(header) for header in headers]
-    expected = stokes[0]
-    offenders = [
-        f"{fits_path} has Stokes {_describe_stokes(codes)}"
-        for fits_path, codes in zip(file_list, stokes, strict=False)
-        if codes != expected
-    ]
-    if offenders:
-        msg = (
-            "All input images must share the same Stokes parameter. Expected "
-            f"Stokes {_describe_stokes(expected)} from {file_list[0]}, but found:\n"
-            f"{_format_offenders(offenders)}"
-        )
-        raise StokesMismatchException(msg)
-
-    return expected
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    return _matching_stokes(file_list, headers)
 
 
 check_matching_stokes = sync_wrapper(check_matching_stokes_coro)
+
+
+async def check_matching_inputs_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> None:
+    """Confirm the inputs share a pixel grid, axes and Stokes parameter.
+
+    Each header is read once, and no image data is read.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        ShapeMismatchException: If any image differs in shape from the first
+        AxisMismatchException: If any image's axes differ from the first
+        StokesMismatchException: If any image differs in Stokes from the first
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    _matching_shape(file_list, headers)
+    _matching_axes(file_list, headers)
+    _matching_stokes(file_list, headers)
+
+
+check_matching_inputs = sync_wrapper(check_matching_inputs_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -494,7 +585,11 @@ async def create_output_cube_coro(
         diff_time = np.diff(sorted_specs)
         diff_diff_time = np.diff(diff_time)
         running_deviation_from_zero = np.abs(np.cumsum(diff_diff_time))
-        even_spec = np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
+        # Fewer than three times have no second difference, and are always
+        # evenly spaced
+        even_spec = len(diff_diff_time) == 0 or bool(
+            np.max(running_deviation_from_zero) < (np.mean(diff_time) * 0.02)
+        )
 
         # This is a simpler way where no attempt is made to ensure the total
         # error on the irregular steps accumulates and violates the regular
@@ -926,6 +1021,21 @@ def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
     return np.arange(n_stokes)
 
 
+def get_axis_types(header: fits.Header) -> tuple[str, ...]:
+    """Get the CTYPE of every axis of an image, in FITS axis order.
+
+    Args:
+        header (fits.Header): Primary header of an image
+
+    Returns:
+        tuple[str, ...]: One CTYPE per axis, "" where an axis has none
+    """
+    return tuple(
+        str(header.get(f"CTYPE{axis}", "")).strip()
+        for axis in range(1, header["NAXIS"] + 1)
+    )
+
+
 def get_stokes_codes(header: fits.Header) -> tuple[int, ...] | None:
     """Get the FITS Stokes code of each plane along the Stokes axis.
 
@@ -1118,8 +1228,7 @@ async def combine_fits_coro(
     """
     # TODO: Check that all files have the same WCS
 
-    await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
-    await check_matching_stokes_coro(file_list=file_list, max_workers=max_workers)
+    await check_matching_inputs_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
