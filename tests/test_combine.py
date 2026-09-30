@@ -9,17 +9,45 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.time import Time
-from fitscube.combine_fits import check_for_any_beam, combine_fits, get_polarisation
+from fitscube.combine_fits import (
+    check_for_any_beam,
+    combine_fits,
+    get_polarisation,
+    make_beam_table,
+)
+from radio_beam import Beams
 
 
 @pytest.mark.filterwarnings("ignore:'datfix' made the change")
 def test_get_polarisation_is_axis_index(headers: dict[str, str]) -> None:
-    """POL is the 0-based index along the Stokes axis, not the Stokes code"""
+    """POL values are 0-based indices along the Stokes axis, not Stokes codes"""
     header = fits.Header.fromstring(headers["beams"])
-    assert get_polarisation(header) == 0  # CRVAL4 == 1.0 -> Stokes I
+    header["NAXIS4"] = 1
+    header["CRVAL4"] = 3.0  # Stokes U, but a single plane
+    assert get_polarisation(header).tolist() == [0]
 
-    header["CRVAL4"] = 3.0  # Stokes U, still a single plane
-    assert get_polarisation(header) == 0
+    header["NAXIS4"] = 3
+    assert get_polarisation(header).tolist() == [0, 1, 2]
+
+
+@pytest.mark.filterwarnings("ignore:'datfix' made the change")
+def test_make_beam_table_multi_stokes(headers: dict[str, str]) -> None:
+    """CHAN varies slowest and POL fastest, with NPOL taken from the cube"""
+    header = fits.Header.fromstring(headers["beams"])
+    header["NAXIS4"] = 3
+    nchan, npol = 4, 3
+    beams = Beams(
+        major=np.linspace(1, 2, nchan * npol) * u.arcsec,
+        minor=np.ones(nchan * npol) * u.arcsec,
+        pa=np.zeros(nchan * npol) * u.deg,
+    )
+
+    hdu = make_beam_table(beams, header)
+
+    assert hdu.header["NCHAN"] == nchan
+    assert hdu.header["NPOL"] == npol
+    assert hdu.data["CHAN"].tolist() == np.repeat(np.arange(nchan), npol).tolist()
+    assert hdu.data["POL"].tolist() == np.tile(np.arange(npol), nchan).tolist()
 
 
 def test_check_for_any_beams_no_beams(file_list) -> None:

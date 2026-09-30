@@ -814,18 +814,17 @@ def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
-def get_polarisation(header: fits.Header) -> int:
-    """Get the 0-based index of the polarisation plane along the Stokes axis.
+def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
+    """Get the 0-based plane indices along the Stokes axis.
 
-    This is the value the CASA beam table expects in its POL column: an index
-    into the cube's Stokes axis, not a FITS Stokes code (1=I, 2=Q, 3=U, 4=V).
-    Only a single Stokes plane is supported, so the index is always 0.
+    These are the values the CASA beam table expects in its POL column: indices
+    into the cube's Stokes axis, not FITS Stokes codes (1=I, 2=Q, 3=U, 4=V).
 
     Args:
-        header (fits.Header): Primary header
+        header (fits.Header): Primary header of the cube
 
     Returns:
-        int: 0-based index along the Stokes axis
+        NDArray[np.int_]: ``arange(n_stokes)``, or ``[0]`` if there is no Stokes axis
     """
     wcs = WCS(header)
     array_shape = wcs.array_shape
@@ -835,29 +834,34 @@ def get_polarisation(header: fits.Header) -> int:
 
     for ctype, naxis in zip(wcs.axis_type_names, array_shape[::-1], strict=False):
         if ctype == "STOKES":
-            assert naxis <= 1, (
-                f"Only one polarisation axis is supported - found {naxis}"
-            )
-    return 0
+            return np.arange(naxis)
+    return np.arange(1)
 
 
-def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
+def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
     """Make a beam table.
 
     CHAN and POL are 0-based indices into the cube's frequency and Stokes axes
     (CASA convention), not FITS Stokes codes.
 
     Args:
-        beams (Beams): Beams object
-        old_header (fits.Header): Old header to infer polarisation index
+        beams (Beams): One beam per (channel, Stokes plane), ordered with
+            channel varying slowest and Stokes fastest
+        cube_header (fits.Header): Header of the output cube, used to find the
+            Stokes axis
 
     Returns:
         fits.BinTableHDU: Beam table
     """
-    nchan = len(beams.major)
-    chans = np.arange(nchan)
-    pol = get_polarisation(old_header)
-    pols = np.ones(nchan, dtype=int) * pol
+    stokes_idx = get_polarisation(cube_header)
+    npol = len(stokes_idx)
+    nbeams = len(beams.major)
+    if nbeams % npol != 0:
+        msg = f"Got {nbeams} beams, which is not a multiple of the {npol} Stokes planes"
+        raise ValueError(msg)
+    nchan = nbeams // npol
+    chans = np.repeat(np.arange(nchan), npol)
+    pols = np.tile(stokes_idx, nchan)
     tiny = np.finfo(np.float32).tiny
     # A zero-sized beam is not a valid PSF, and a literal zero is exactly what
     # the sentinel below exists to keep out of the table. NaN them first so they
@@ -882,7 +886,7 @@ def make_beam_table(beams: Beams, old_header: fits.Header) -> fits.BinTableHDU:
     tab_header = tab_hdu.header
     tab_header["EXTNAME"] = "BEAMS"
     tab_header["NCHAN"] = nchan
-    tab_header["NPOL"] = 1  # Only one pol for now
+    tab_header["NPOL"] = npol
 
     return tab_hdu
 
@@ -1148,8 +1152,8 @@ async def combine_fits_coro(
 
     # Handle beams
     if has_beams and not single_beam:
-        old_header = fits.getheader(file_list[0])
-        beam_table_hdu = make_beam_table(beams, old_header)
+        cube_header = fits.getheader(out_cube)
+        beam_table_hdu = make_beam_table(beams, cube_header)
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(
