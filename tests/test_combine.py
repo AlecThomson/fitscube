@@ -129,3 +129,74 @@ def test_combine_beam_pol_is_zero_index_for_single_stokes(
         assert hdul[0].header["NAXIS4"] == 1
         assert np.all(hdul[1].data["POL"] == 0)
         assert np.array_equal(hdul[1].data["CHAN"], np.arange(len(even_specs)))
+
+
+def _write_layout_planes(tmp_path: Path, layout: str, n_chan: int = 3) -> list[Path]:
+    """Write single-channel images, each with its own beam, in the given axis layout."""
+    file_list = []
+    for i in range(n_chan):
+        header = fits.Header()
+        header["CTYPE1"], header["CRVAL1"] = "RA---SIN", 0.0
+        header["CDELT1"], header["CRPIX1"] = -1e-3, 5.0
+        header["CTYPE2"], header["CRVAL2"] = "DEC--SIN", 0.0
+        header["CDELT2"], header["CRPIX2"] = 1e-3, 5.0
+        freq = 1e9 + i * 1e6
+        # Stokes U, so a POL derived from the Stokes code would not be 0
+        stokes = {"CTYPE": "STOKES", "CRVAL": 3.0, "CDELT": 1.0, "CRPIX": 1.0}
+        spectral = {
+            "CTYPE": "FREQ",
+            "CRVAL": freq,
+            "CDELT": 1e6,
+            "CRPIX": 1.0,
+            "CUNIT": "Hz",
+        }
+        extra_axes = {
+            "2d": [],
+            "freq": [spectral],
+            "freq_stokes": [spectral, stokes],  # wsclean ordering
+            "stokes_freq": [stokes, spectral],  # CASA ordering
+        }[layout]
+        if layout == "2d":
+            header["REFFREQ"] = freq
+        for axis, keys in enumerate(extra_axes, start=3):
+            for key, value in keys.items():
+                header[f"{key}{axis}"] = value
+        # Vary the beam per plane so a beam table is written
+        header["BMAJ"] = 1e-3 * (1 + i)
+        header["BMIN"] = 1e-3
+        header["BPA"] = 0.0
+
+        shape = (1,) * len(extra_axes) + (10, 10)
+        path = tmp_path / f"{layout}_{i}.fits"
+        fits.PrimaryHDU(np.full(shape, float(i)), header=header).writeto(path)
+        file_list.append(path)
+    return file_list
+
+
+@pytest.mark.parametrize(
+    ("layout", "has_stokes"),
+    [("2d", False), ("freq", False), ("freq_stokes", True), ("stokes_freq", True)],
+)
+def test_combine_beam_table_indices_by_layout(
+    tmp_path: Path, layout: str, has_stokes: bool
+) -> None:
+    """CHAN/POL are 0-based axis indices for every supported input layout"""
+    n_chan = 3
+    out_cube = tmp_path / "out.fits"
+    combine_fits(
+        file_list=_write_layout_planes(tmp_path, layout, n_chan=n_chan),
+        out_cube=out_cube,
+        overwrite=True,
+    )
+
+    with fits.open(out_cube) as hdul:
+        header = hdul[0].header
+        ctypes = [header[f"CTYPE{axis}"] for axis in range(1, header["NAXIS"] + 1)]
+        # No Stokes axis is invented for inputs that lack one
+        assert ("STOKES" in ctypes) == has_stokes
+
+        beam_table = hdul["BEAMS"]
+        assert beam_table.header["NCHAN"] == n_chan
+        assert beam_table.header["NPOL"] == 1
+        assert np.array_equal(beam_table.data["CHAN"], np.arange(n_chan))
+        assert np.all(beam_table.data["POL"] == 0)
