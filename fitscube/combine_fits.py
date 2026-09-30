@@ -4,6 +4,7 @@
 Assumes:
 - All files have the same WCS
 - All files have the same shape / pixel grid (checked, see `check_matching_shapes`)
+- All files have the same Stokes parameter (checked, see `check_matching_stokes`)
 - All the relevant information is in the first header of the first image
 - Frequency is either a WCS axis or in the REFFREQ header keyword OR
 - Time is present in the DATE-OBS header keyword for time-domain-mode
@@ -43,6 +44,7 @@ from fitscube.exceptions import (
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
+    StokesMismatchException,
 )
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
 
@@ -167,14 +169,10 @@ async def check_matching_shapes_coro(
         if shape != expected
     ]
     if offenders:
-        # Keep the message readable when a whole run is mismatched
-        shown = offenders[:10]
-        if len(offenders) > len(shown):
-            shown.append(f"...and {len(offenders) - len(shown)} more")
-        listing = "\n".join(shown)
         msg = (
             "All input images must share the same pixel grid. Expected "
-            f"(NAXIS1, NAXIS2)={expected} from {file_list[0]}, but found:\n{listing}"
+            f"(NAXIS1, NAXIS2)={expected} from {file_list[0]}, but found:\n"
+            f"{_format_offenders(offenders)}"
         )
         raise ShapeMismatchException(msg)
 
@@ -182,6 +180,69 @@ async def check_matching_shapes_coro(
 
 
 check_matching_shapes = sync_wrapper(check_matching_shapes_coro)
+
+
+def _format_offenders(offenders: list[str], max_shown: int = 10) -> str:
+    """List the offending inputs of a failed check, one per line.
+
+    Args:
+        offenders (list[str]): One description per offending input
+        max_shown (int, optional): Most offenders to list. Defaults to 10.
+
+    Returns:
+        str: The listing, truncated with a count of the rest
+    """
+    # Keep the message readable when a whole run is mismatched
+    shown = offenders[:max_shown]
+    if len(offenders) > len(shown):
+        shown.append(f"...and {len(offenders) - len(shown)} more")
+    return "\n".join(shown)
+
+
+async def check_matching_stokes_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> tuple[int, ...] | None:
+    """Confirm every input image carries the same Stokes parameter.
+
+    The output cube takes its header from the first input, so an input with a
+    different Stokes parameter would be silently mislabelled. Only headers are
+    read.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        StokesMismatchException: If any image differs in Stokes from the first
+
+    Returns:
+        tuple[int, ...] | None: The common FITS Stokes codes, or None if no input has a Stokes axis
+    """
+    headers = await gather_with_limit(
+        max_workers,
+        *(asyncio.to_thread(fits.getheader, fits_path) for fits_path in file_list),
+        desc="Checking Stokes",
+    )
+    stokes = [get_stokes_codes(header) for header in headers]
+    expected = stokes[0]
+    offenders = [
+        f"{fits_path} has Stokes codes {codes}"
+        for fits_path, codes in zip(file_list, stokes, strict=False)
+        if codes != expected
+    ]
+    if offenders:
+        msg = (
+            "All input images must share the same Stokes parameter. Expected "
+            f"Stokes codes {expected} from {file_list[0]}, but found:\n"
+            f"{_format_offenders(offenders)}"
+        )
+        raise StokesMismatchException(msg)
+
+    return expected
+
+
+check_matching_stokes = sync_wrapper(check_matching_stokes_coro)
 
 
 # https://stackoverflow.com/a/66082278
@@ -841,6 +902,38 @@ def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
     return np.arange(n_stokes)
 
 
+def get_stokes_codes(header: fits.Header) -> tuple[int, ...] | None:
+    """Get the FITS Stokes code of each plane along the Stokes axis.
+
+    FITS Stokes codes are 1..4 = I, Q, U, V; -1..-4 = RR, LL, RL, LR and
+    -5..-8 = XX, YY, XY, YX.
+
+    Args:
+        header (fits.Header): Primary header of an image
+
+    Returns:
+        tuple[int, ...] | None: One code per Stokes plane, or None if there is no Stokes axis
+    """
+    wcs = WCS(header)
+    array_shape = wcs.array_shape
+    if array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
+
+    for axis, (ctype, naxis) in enumerate(
+        zip(wcs.axis_type_names, array_shape[::-1], strict=False)
+    ):
+        if ctype == "STOKES":
+            crval = wcs.wcs.crval[axis]
+            crpix = wcs.wcs.crpix[axis]
+            cdelt = wcs.wcs.cdelt[axis]
+            # FITS pixels are 1-based
+            return tuple(
+                round(crval + (pixel + 1 - crpix) * cdelt) for pixel in range(naxis)
+            )
+    return None
+
+
 def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
     """Make a beam table.
 
@@ -1013,6 +1106,7 @@ async def combine_fits_coro(
     # TODO: Check that all files have the same WCS
 
     await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
+    await check_matching_stokes_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
@@ -1110,6 +1204,12 @@ async def combine_fits_coro(
         )
         raise ValueError(msg)
 
+    # Build the beam table before writing any data, so an unsupported cube
+    # (e.g. multi-Stokes) fails before the planes are copied in
+    beam_table_hdu = (
+        make_beam_table(beams, new_header) if has_beams and not single_beam else None
+    )
+
     new_channels = np.arange(len(specs))
     old_channels = np.arange(len(file_specs))
 
@@ -1151,8 +1251,7 @@ async def combine_fits_coro(
         await gather_with_limit(max_workers, *coros, desc="Writing channels")
 
     # Handle beams
-    if has_beams and not single_beam:
-        beam_table_hdu = make_beam_table(beams, new_header)
+    if beam_table_hdu is not None:
         msg = f"Appending beam table to {out_cube}"
         logger.info(msg)
         fits.append(

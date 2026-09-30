@@ -9,11 +9,16 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
-from fitscube.combine_fits import check_matching_shapes, combine_fits
+from fitscube.combine_fits import (
+    check_matching_shapes,
+    check_matching_stokes,
+    combine_fits,
+)
 from fitscube.exceptions import (
     AxisOrderException,
     IrregularSpacingException,
     ShapeMismatchException,
+    StokesMismatchException,
 )
 
 
@@ -94,6 +99,62 @@ def test_mismatched_shapes_raise(
 
 def test_check_matching_shapes(file_list: list[Path]) -> None:
     assert check_matching_shapes(file_list=file_list) == (8, 8)
+
+
+def _drop_stokes_axis(path: Path) -> Path:
+    """Rewrite a (FREQ, STOKES, DEC, RA) plane from make_plane without its Stokes axis"""
+    data, header = fits.getdata(path, header=True)
+    for key in ("CTYPE", "CRPIX", "CRVAL", "CDELT", "CUNIT"):
+        if f"{key}4" in header:
+            header[f"{key}3"] = header[f"{key}4"]
+            del header[f"{key}4"]
+    fits.PrimaryHDU(data[:, 0], header=header).writeto(path, overwrite=True)
+    return path
+
+
+def test_check_matching_stokes(file_list: list[Path]) -> None:
+    for path in file_list:
+        fits.setval(path, "CRVAL3", value=3.0)  # Stokes U
+    assert check_matching_stokes(file_list=file_list) == (3,)
+
+
+def test_check_matching_stokes_compares_codes_not_keywords(
+    file_list: list[Path],
+) -> None:
+    """CRVAL3=2 at CRPIX3=2 is still Stokes I at the (only) first pixel"""
+    fits.setval(file_list[-1], "CRVAL3", value=2.0)
+    fits.setval(file_list[-1], "CRPIX3", value=2.0)
+    assert check_matching_stokes(file_list=file_list) == (1,)
+
+
+def test_check_matching_stokes_no_stokes_axis(
+    tmp_path: Path, specs: u.Quantity
+) -> None:
+    file_list = [
+        _drop_stokes_axis(make_plane(tmp_path / f"plane_{i}.fits", spec))
+        for i, spec in enumerate(specs)
+    ]
+    assert check_matching_stokes(file_list=file_list) is None
+
+
+def test_mismatched_stokes_raise(tmp_path: Path, file_list: list[Path]) -> None:
+    """A Q plane among I planes would be mislabelled as I in the cube"""
+    fits.setval(file_list[2], "CRVAL3", value=2.0)  # Stokes Q
+    out_cube = tmp_path / "cube.fits"
+
+    with pytest.raises(StokesMismatchException, match=file_list[2].name):
+        combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+    assert not out_cube.exists()
+
+
+def test_missing_stokes_axis_raises(tmp_path: Path, file_list: list[Path]) -> None:
+    """An input without a Stokes axis has an unknown Stokes, so cannot be mixed in"""
+    _drop_stokes_axis(file_list[1])
+    out_cube = tmp_path / "cube.fits"
+
+    with pytest.raises(StokesMismatchException, match=file_list[1].name):
+        combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+    assert not out_cube.exists()
 
 
 def test_spectral_axis_must_be_slowest(tmp_path: Path, specs: u.Quantity) -> None:

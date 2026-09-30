@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import permutations
 from pathlib import Path
 
 import astropy.units as u
@@ -131,72 +132,171 @@ def test_combine_beam_pol_is_zero_index_for_single_stokes(
         assert np.array_equal(hdul[1].data["CHAN"], np.arange(len(even_specs)))
 
 
-def _write_layout_planes(tmp_path: Path, layout: str, n_chan: int = 3) -> list[Path]:
-    """Write single-channel images, each with its own beam, in the given axis layout."""
+N_CHAN = 3
+MJD_START = 60000.0
+STOKES_CODES = (1, 2, 3, 4, -5)  # I, Q, U, V, XX
+CELESTIAL_ORDERS = (("RA", "DEC"), ("DEC", "RA"))
+
+
+def _layouts() -> list[tuple[bool, tuple[str, ...], tuple[str, ...]]]:
+    """Every supported (time_domain_mode, celestial, extra axes) input layout.
+
+    RA/DEC stay on axes 1 and 2 in either order. Any ordered subset of FREQ,
+    TIME and STOKES follows. Frequency mode needs a FREQ axis unless the image
+    is 2D (REFFREQ); time mode reads DATE-OBS, so any subset works there and a
+    missing TIME axis is appended to the cube.
+    """
+    extra_layouts = [
+        order
+        for size in range(4)
+        for order in permutations(("FREQ", "TIME", "STOKES"), size)
+    ]
+    return [
+        (time_domain_mode, celestial, extra)
+        for time_domain_mode in (False, True)
+        for celestial in CELESTIAL_ORDERS
+        for extra in extra_layouts
+        if time_domain_mode or not extra or "FREQ" in extra
+    ]
+
+
+def _layout_id(layout: tuple[bool, tuple[str, ...], tuple[str, ...]]) -> str:
+    time_domain_mode, celestial, extra = layout
+    mode = "time" if time_domain_mode else "freq"
+    return f"{mode}-{','.join((*celestial, *extra))}"
+
+
+LAYOUTS = _layouts()
+
+
+def _write_planes(
+    tmp_path: Path,
+    celestial: tuple[str, ...],
+    extra_axes: tuple[str, ...],
+    stokes_code: int,
+    n_chan: int = N_CHAN,
+) -> list[Path]:
+    """Write single-channel images in the given axis layout.
+
+    Plane ``i`` holds the value ``i`` and its own beam, so the cube's plane
+    order can be checked and a BEAMS table is always written.
+    """
     file_list = []
     for i in range(n_chan):
-        header = fits.Header()
-        header["CTYPE1"], header["CRVAL1"] = "RA---SIN", 0.0
-        header["CDELT1"], header["CRPIX1"] = -1e-3, 5.0
-        header["CTYPE2"], header["CRVAL2"] = "DEC--SIN", 0.0
-        header["CDELT2"], header["CRPIX2"] = 1e-3, 5.0
-        freq = 1e9 + i * 1e6
-        # Stokes U, so a POL derived from the Stokes code would not be 0
-        stokes = {"CTYPE": "STOKES", "CRVAL": 3.0, "CDELT": 1.0, "CRPIX": 1.0}
-        spectral = {
-            "CTYPE": "FREQ",
-            "CRVAL": freq,
-            "CDELT": 1e6,
-            "CRPIX": 1.0,
-            "CUNIT": "Hz",
+        time = Time(MJD_START + i * 10 / 86400, format="mjd")
+        axes = {
+            "RA": {"CTYPE": "RA---SIN", "CRVAL": 0.0, "CDELT": -1e-3, "CRPIX": 5.0},
+            "DEC": {"CTYPE": "DEC--SIN", "CRVAL": 0.0, "CDELT": 1e-3, "CRPIX": 5.0},
+            "FREQ": {
+                "CTYPE": "FREQ",
+                "CRVAL": 1e9 + i * 1e6,
+                "CDELT": 1e6,
+                "CRPIX": 1.0,
+                "CUNIT": "Hz",
+            },
+            "TIME": {
+                "CTYPE": "TIME",
+                "CRVAL": time.mjd * 86400,
+                "CDELT": 10.0,
+                "CRPIX": 1.0,
+                "CUNIT": "s",
+            },
+            "STOKES": {
+                "CTYPE": "STOKES",
+                "CRVAL": float(stokes_code),
+                "CDELT": 1.0,
+                "CRPIX": 1.0,
+            },
         }
-        extra_axes = {
-            "2d": [],
-            "freq": [spectral],
-            "freq_stokes": [spectral, stokes],  # wsclean ordering
-            "stokes_freq": [stokes, spectral],  # CASA ordering
-        }[layout]
-        if layout == "2d":
-            header["REFFREQ"] = freq
-        for axis, keys in enumerate(extra_axes, start=3):
-            for key, value in keys.items():
-                header[f"{key}{axis}"] = value
+        header = fits.Header()
+        for fits_axis, name in enumerate((*celestial, *extra_axes), start=1):
+            for key, value in axes[name].items():
+                header[f"{key}{fits_axis}"] = value
+        header["DATE-OBS"] = time.isot
+        header["MJD-OBS"] = time.mjd
+        if not extra_axes:
+            header["REFFREQ"] = 1e9 + i * 1e6
         # Vary the beam per plane so a beam table is written
         header["BMAJ"] = 1e-3 * (1 + i)
         header["BMIN"] = 1e-3
         header["BPA"] = 0.0
 
         shape = (1,) * len(extra_axes) + (10, 10)
-        path = tmp_path / f"{layout}_{i}.fits"
+        path = tmp_path / f"plane_{i}.fits"
         fits.PrimaryHDU(np.full(shape, float(i)), header=header).writeto(path)
         file_list.append(path)
     return file_list
 
 
 @pytest.mark.parametrize(
-    ("layout", "has_stokes"),
-    [("2d", False), ("freq", False), ("freq_stokes", True), ("stokes_freq", True)],
+    ("layout", "stokes_code"),
+    [
+        (layout, STOKES_CODES[idx % len(STOKES_CODES)])
+        for idx, layout in enumerate(LAYOUTS)
+    ],
+    ids=[_layout_id(layout) for layout in LAYOUTS],
 )
-def test_combine_beam_table_indices_by_layout(
-    tmp_path: Path, layout: str, has_stokes: bool
+def test_combine_axis_layouts(
+    tmp_path: Path,
+    layout: tuple[bool, tuple[str, ...], tuple[str, ...]],
+    stokes_code: int,
 ) -> None:
-    """CHAN/POL are 0-based axis indices for every supported input layout"""
-    n_chan = 3
+    """Every input axis layout gives the right cube axes, plane order and BEAMS"""
+    time_domain_mode, celestial, extra_axes = layout
     out_cube = tmp_path / "out.fits"
     combine_fits(
-        file_list=_write_layout_planes(tmp_path, layout, n_chan=n_chan),
+        file_list=_write_planes(tmp_path, celestial, extra_axes, stokes_code),
         out_cube=out_cube,
+        time_domain_mode=time_domain_mode,
         overwrite=True,
     )
 
     with fits.open(out_cube) as hdul:
         header = hdul[0].header
-        ctypes = [header[f"CTYPE{axis}"] for axis in range(1, header["NAXIS"] + 1)]
+        n_axes = header["NAXIS"]
+        ctypes = [header[f"CTYPE{axis}"] for axis in range(1, n_axes + 1)]
+        combine_ctype = "TIME" if time_domain_mode else "FREQ"
+        assert ctypes.count(combine_ctype) == 1
+        combine_axis = ctypes.index(combine_ctype) + 1
+
+        # Axes: the combine axis holds every plane, the rest are degenerate
+        for axis in range(3, n_axes + 1):
+            expected = N_CHAN if axis == combine_axis else 1
+            assert header[f"NAXIS{axis}"] == expected, ctypes
         # No Stokes axis is invented for inputs that lack one
-        assert ("STOKES" in ctypes) == has_stokes
+        assert ("STOKES" in ctypes) == ("STOKES" in extra_axes)
+        if "STOKES" in ctypes:
+            assert header[f"CRVAL{ctypes.index('STOKES') + 1}"] == stokes_code
+
+        # Plane i of the combine axis holds input i
+        planes = np.moveaxis(hdul[0].data, n_axes - combine_axis, 0)
+        for i, plane in enumerate(planes.reshape(N_CHAN, -1)):
+            assert np.all(plane == i)
 
         beam_table = hdul["BEAMS"]
-        assert beam_table.header["NCHAN"] == n_chan
+        assert beam_table.header["NCHAN"] == N_CHAN
         assert beam_table.header["NPOL"] == 1
-        assert np.array_equal(beam_table.data["CHAN"], np.arange(n_chan))
+        assert np.array_equal(beam_table.data["CHAN"], np.arange(N_CHAN))
         assert np.all(beam_table.data["POL"] == 0)
+
+
+def test_combine_rejects_multi_stokes_beams(tmp_path: Path) -> None:
+    """A multi-Stokes cube with varying beams fails before any plane is written"""
+    file_list = []
+    for i in range(N_CHAN):
+        header = fits.Header()
+        header["CTYPE3"], header["CRVAL3"] = "STOKES", 1.0
+        header["CDELT3"], header["CRPIX3"] = 1.0, 1.0
+        header["CTYPE4"], header["CRVAL4"] = "FREQ", 1e9 + i * 1e6
+        header["CDELT4"], header["CRPIX4"], header["CUNIT4"] = 1e6, 1.0, "Hz"
+        header["BMAJ"], header["BMIN"], header["BPA"] = 1e-3 * (1 + i), 1e-3, 0.0
+        path = tmp_path / f"plane_{i}.fits"
+        fits.PrimaryHDU(np.full((1, 2, 10, 10), 1.0 + i), header=header).writeto(path)
+        file_list.append(path)
+
+    out_cube = tmp_path / "out.fits"
+    with pytest.raises(NotImplementedError, match="single-Stokes"):
+        combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+
+    # The data were never written: every plane is still the blank fill
+    assert np.all(fits.getdata(out_cube) == 0)
