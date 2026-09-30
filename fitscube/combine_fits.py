@@ -832,10 +832,13 @@ def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
         msg = "WCS does not have an array shape"
         raise ValueError(msg)
 
+    # A cube without a Stokes axis has a single, implicit Stokes plane
+    n_stokes = 1
     for ctype, naxis in zip(wcs.axis_type_names, array_shape[::-1], strict=False):
         if ctype == "STOKES":
-            return np.arange(naxis)
-    return np.arange(1)
+            n_stokes = naxis
+            break
+    return np.arange(n_stokes)
 
 
 def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:
