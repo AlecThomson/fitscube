@@ -25,11 +25,12 @@ from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
 
 import astropy.units as u
 import numpy as np
+from astropy.coordinates import StokesCoord
 from astropy.io import fits
 from astropy.io.fits.verify import VerifyWarning
 from astropy.table import Table
 from astropy.time import Time
-from astropy.wcs import WCS
+from astropy.wcs import WCS, WCSSUB_STOKES
 from numpy.typing import ArrayLike, NDArray
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
@@ -199,6 +200,20 @@ def _format_offenders(offenders: list[str], max_shown: int = 10) -> str:
     return "\n".join(shown)
 
 
+def _describe_stokes(codes: tuple[int, ...] | None) -> str:
+    """Name the Stokes parameters of an image for an error message.
+
+    Args:
+        codes (tuple[int, ...] | None): FITS Stokes codes, or None if there is no Stokes axis
+
+    Returns:
+        str: e.g. ``['I'] (codes (1,))``, or a note that there is no Stokes axis
+    """
+    if codes is None:
+        return "unknown (no Stokes axis)"
+    return f"{StokesCoord(list(codes)).symbol.tolist()} (codes {codes})"
+
+
 async def check_matching_stokes_coro(
     file_list: list[Path],
     max_workers: int | None = None,
@@ -227,14 +242,14 @@ async def check_matching_stokes_coro(
     stokes = [get_stokes_codes(header) for header in headers]
     expected = stokes[0]
     offenders = [
-        f"{fits_path} has Stokes codes {codes}"
+        f"{fits_path} has Stokes {_describe_stokes(codes)}"
         for fits_path, codes in zip(file_list, stokes, strict=False)
         if codes != expected
     ]
     if offenders:
         msg = (
             "All input images must share the same Stokes parameter. Expected "
-            f"Stokes codes {expected} from {file_list[0]}, but found:\n"
+            f"Stokes {_describe_stokes(expected)} from {file_list[0]}, but found:\n"
             f"{_format_offenders(offenders)}"
         )
         raise StokesMismatchException(msg)
@@ -398,7 +413,7 @@ async def create_cube_from_scratch_coro(
 
     header.tofile(output_file, overwrite=overwrite)
 
-    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]), None)
+    bytes_per_value = BIT_DICT.get(abs(output_header["BITPIX"]))
     msg = f"Header BITPIX={output_header['BITPIX']}, bytes_per_value={bytes_per_value}"
     logger.info(msg)
     if bytes_per_value is None:
@@ -875,11 +890,29 @@ def nan_zero_beams(beams: Beams, zero_beam_idx: NDArray[np.bool_]) -> Beams:
     )
 
 
+def _stokes_wcs(header: fits.Header) -> WCS | None:
+    """Get the Stokes axis of an image as a 1D WCS.
+
+    Args:
+        header (fits.Header): Primary header of an image
+
+    Returns:
+        WCS | None: The Stokes axis alone, or None if there is no Stokes axis
+    """
+    wcs = WCS(header)
+    if wcs.array_shape is None:
+        msg = "WCS does not have an array shape"
+        raise ValueError(msg)
+
+    stokes_wcs = wcs.sub([WCSSUB_STOKES])
+    return stokes_wcs if stokes_wcs.naxis else None
+
+
 def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
     """Get the 0-based plane indices along the Stokes axis.
 
     These are the values the CASA beam table expects in its POL column: indices
-    into the cube's Stokes axis, not FITS Stokes codes (1=I, 2=Q, 3=U, 4=V).
+    into the cube's Stokes axis, not FITS Stokes codes (see `get_stokes_codes`).
 
     Args:
         header (fits.Header): Primary header of the cube
@@ -887,26 +920,17 @@ def get_polarisation(header: fits.Header) -> NDArray[np.int_]:
     Returns:
         NDArray[np.int_]: ``arange(n_stokes)``, or ``[0]`` if there is no Stokes axis
     """
-    wcs = WCS(header)
-    array_shape = wcs.array_shape
-    if array_shape is None:
-        msg = "WCS does not have an array shape"
-        raise ValueError(msg)
-
+    stokes_wcs = _stokes_wcs(header)
     # CASA counts an image without a Stokes axis as one Stokes plane in its beam set
-    n_stokes = 1
-    for ctype, naxis in zip(wcs.axis_type_names, array_shape[::-1], strict=False):
-        if ctype == "STOKES":
-            n_stokes = naxis
-            break
+    n_stokes = 1 if stokes_wcs is None else stokes_wcs.pixel_shape[0]
     return np.arange(n_stokes)
 
 
 def get_stokes_codes(header: fits.Header) -> tuple[int, ...] | None:
     """Get the FITS Stokes code of each plane along the Stokes axis.
 
-    FITS Stokes codes are 1..4 = I, Q, U, V; -1..-4 = RR, LL, RL, LR and
-    -5..-8 = XX, YY, XY, YX.
+    The codes are those of `astropy.coordinates.StokesCoord`, e.g. 1..4 for
+    I, Q, U, V (see ``astropy.coordinates.polarization.FITS_STOKES_VALUE_SYMBOL_MAP``).
 
     Args:
         header (fits.Header): Primary header of an image
@@ -914,24 +938,13 @@ def get_stokes_codes(header: fits.Header) -> tuple[int, ...] | None:
     Returns:
         tuple[int, ...] | None: One code per Stokes plane, or None if there is no Stokes axis
     """
-    wcs = WCS(header)
-    array_shape = wcs.array_shape
-    if array_shape is None:
-        msg = "WCS does not have an array shape"
-        raise ValueError(msg)
-
-    for axis, (ctype, naxis) in enumerate(
-        zip(wcs.axis_type_names, array_shape[::-1], strict=False)
-    ):
-        if ctype == "STOKES":
-            crval = wcs.wcs.crval[axis]
-            crpix = wcs.wcs.crpix[axis]
-            cdelt = wcs.wcs.cdelt[axis]
-            # FITS pixels are 1-based
-            return tuple(
-                round(crval + (pixel + 1 - crpix) * cdelt) for pixel in range(naxis)
-            )
-    return None
+    stokes_wcs = _stokes_wcs(header)
+    if stokes_wcs is None:
+        return None
+    stokes: StokesCoord = stokes_wcs.pixel_to_world(
+        np.arange(stokes_wcs.pixel_shape[0])
+    )
+    return tuple(int(code) for code in np.round(stokes.value))
 
 
 def make_beam_table(beams: Beams, cube_header: fits.Header) -> fits.BinTableHDU:

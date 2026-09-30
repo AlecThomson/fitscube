@@ -44,7 +44,7 @@ def file_list(even_specs: u.Quantity):
 
 
 def test_parse_specs(file_list: list[Path], even_specs: u.Quantity):
-    file_specs, specs, missing_chan_idx = parse_specs(file_list)
+    file_specs, _specs, _missing_chan_idx = parse_specs(file_list)
     assert np.array_equal(file_specs, even_specs)
 
 

@@ -446,7 +446,7 @@ uvloop = [
 
 [package.metadata]
 requires-dist = [
-    { name = "astropy" },
+    { name = "astropy", specifier = ">=6.0" },
     { name = "furo", marker = "extra == 'docs'", specifier = ">=2023.8.17" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=0.13" },
     { name = "numpy", specifier = ">=2" },
