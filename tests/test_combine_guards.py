@@ -524,3 +524,36 @@ def test_cd_matrix_carries_the_step(tmp_path: Path, specs: u.Quantity) -> None:
     wcs = WCS(fits.getheader(out_cube))
     out_specs = wcs.spectral.pixel_to_world(np.arange(len(specs)))
     assert np.allclose(out_specs.to(u.Hz).value, specs.to(u.Hz).value)
+
+
+@pytest.mark.parametrize("bounding_box", [False, True])
+def test_invalidate_zeros_on_integer_input(
+    tmp_path: Path, specs: u.Quantity, bounding_box: bool
+) -> None:
+    """NaN was written into the integer plane, which numpy refuses."""
+    file_list = [
+        make_plane(tmp_path / f"int_{i}.fits", spec, value=float(i), dtype=np.int16)
+        for i, spec in enumerate(specs)
+    ]
+    out_cube = tmp_path / "cube.fits"
+
+    with pytest.raises(ValueError, match="float_length"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=out_cube,
+            overwrite=True,
+            invalidate_zeros=True,
+            bounding_box=bounding_box,
+        )
+
+    combine_fits(
+        file_list=file_list,
+        out_cube=out_cube,
+        overwrite=True,
+        invalidate_zeros=True,
+        bounding_box=bounding_box,
+        float_length=32,
+    )
+    cube = fits.getdata(out_cube)
+    assert np.isnan(cube[0]).all()
+    assert np.allclose(cube[1:, 0, 0, 0], [1, 2, 3])

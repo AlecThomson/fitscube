@@ -1141,6 +1141,8 @@ def load_and_preprocess_fits_data(
         return np.full(plane.shape, np.nan)
 
     if invalidate_zeros:
+        # Integer data cannot hold NaN
+        plane = plane.astype(np.result_type(plane.dtype, np.float32))
         plane[plane == 0.0] = np.nan
 
     return plane
@@ -1237,6 +1239,7 @@ async def combine_fits_coro(
     Raises:
         ShapeMismatchException: If the input images do not share a pixel grid
         ValueError: If integer inputs differ in BITPIX, BSCALE, BZERO or BLANK and float_length is None
+        ValueError: If invalidate_zeros is set for integer output
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
@@ -1247,6 +1250,12 @@ async def combine_fits_coro(
     await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
     if float_length is None:
         await check_matching_scaling_coro(file_list=file_list, max_workers=max_workers)
+        if invalidate_zeros and fits.getheader(file_list[0])["BITPIX"] > 0:
+            msg = (
+                "invalidate_zeros writes NaNs, which integer output data cannot "
+                "hold. Pass float_length=32 or 64."
+            )
+            raise ValueError(msg)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
