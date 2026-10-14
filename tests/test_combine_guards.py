@@ -15,6 +15,7 @@ from fitscube.combine_fits import (
     check_matching_axes,
     check_matching_shapes,
     combine_fits,
+    get_parser,
 )
 from fitscube.exceptions import (
     AxisOrderException,
@@ -557,3 +558,24 @@ def test_invalidate_zeros_on_integer_input(
     cube = fits.getdata(out_cube)
     assert np.isnan(cube[0]).all()
     assert np.allclose(cube[1:, 0, 0, 0], [1, 2, 3])
+
+
+@pytest.mark.parametrize("float_length", [8, 16])
+def test_float_length_must_be_fits_float(
+    tmp_path: Path, file_list: list[Path], float_length: int
+) -> None:
+    """BITPIX -8 and -16 are not FITS floats, and raised a KeyError."""
+    out_cube = tmp_path / "cube.fits"
+    with pytest.raises(ValueError, match="32 or 64"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=out_cube,
+            overwrite=True,
+            float_length=float_length,  # type: ignore[arg-type]
+        )
+    assert not out_cube.exists()
+
+    with pytest.raises(SystemExit):
+        get_parser().parse_args(
+            [*map(str, file_list), str(out_cube), "--floating", str(float_length)]
+        )

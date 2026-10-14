@@ -22,7 +22,7 @@ from collections.abc import Callable
 from functools import partial
 from io import BufferedRandom
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
+from typing import IO, Any, Literal, NamedTuple, TypeVar, cast, get_args
 
 import astropy.units as u
 import numpy as np
@@ -65,7 +65,7 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
-FLOAT_LENGTH = Literal[16, 32, 64]
+FLOAT_LENGTH = Literal[32, 64]
 # Smallest grid step accepted, as a fraction of the smallest diff
 MAX_BLANKS_PER_GAP = 16
 # Most grid points built per input value
@@ -88,6 +88,20 @@ def fits_dtype(bit_pix: int) -> str:
 
 warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
 warnings.filterwarnings("ignore", category=VerifyWarning)
+
+
+def check_float_length(float_length: int | None) -> None:
+    """Check that float_length is a FITS float width.
+
+    Args:
+        float_length (int | None): Requested float width in bits
+
+    Raises:
+        ValueError: If float_length is not None, 32 or 64
+    """
+    if float_length not in (None, *get_args(FLOAT_LENGTH)):
+        msg = f"{float_length=} is not a FITS float width. Use 32 or 64."
+        raise ValueError(msg)
 
 
 class InitResult(NamedTuple):
@@ -542,7 +556,7 @@ async def create_output_cube_coro(
         overwrite (bool, optional): If True the out the output cube will overwrite any existing file. Defaults to False.
         time_domain_mode (bool, optional): Whether to join images via the DATE-OBS (e.g. time) axis. If False cube joined along frequency axis. Defaults to False.
         bounding_box (BoundingBox | None, optional): Whether a trimming operation should be applied to input images. If a BoundingBox is supplied this will be used to update the reference pixel position and data shape indicators. Defaults to None.
-        float_length (Literal[16, 32, 64] | None, optional): The precision of the output data. If None drawn from input data. Otherwise values accepted are 16, 32 and 64. Defaults to None.
+        float_length (Literal[32, 64] | None, optional): The precision of the output data. If None drawn from input data. Otherwise values accepted are 32 and 64. Defaults to None.
 
     Returns:
         InitResult: Details of the output cube, including the output header
@@ -695,9 +709,7 @@ async def create_output_cube_coro(
         # 64        numpy.int64
         # -32       numpy.float32
         # -64       numpy.float64
-        assert float_length in list(BIT_DICT.keys()), (
-            f"{float_length=} not in {BIT_DICT=}"
-        )
+        check_float_length(float_length)
         bit_pix = int(float_length)
         logger.info(f"Specified {float_length=}, corresponding to {bit_pix=}")
         new_header["BITPIX"] = -abs(bit_pix)
@@ -1233,19 +1245,21 @@ async def combine_fits_coro(
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
         bounding_box (bool | BoundingBox, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input data is needed, but output cube is smaller. A BoundingBox may be supplied directly (see `get_common_bounding_box`) to force several cubes onto an identical pixel grid. Defaults to False.
         invalidate_zeros (bool, optionals): Set pixels whose values are exactly zero to NaNs. Defaults to False.
-        float_length (Literal[16, 32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
+        float_length (Literal[32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
         blank_zero_beams (bool, optional): Blank (NaN) any input image whose restoring beam is exactly zero. wsclean writes such a beam when a plane holds no fitted PSF - e.g. the model image `-fit-spectral-pol` plants into a channel - and those planes are not comparable to the rest of the cube. Defaults to True.
 
     Raises:
         ShapeMismatchException: If the input images do not share a pixel grid
         ValueError: If integer inputs differ in BITPIX, BSCALE, BZERO or BLANK and float_length is None
         ValueError: If invalidate_zeros is set for integer output
+        ValueError: If float_length is not None, 32 or 64
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
     """
     # TODO: Check that all files have the same WCS
 
+    check_float_length(float_length)
     await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
     await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
     if float_length is None:
@@ -1535,7 +1549,7 @@ def get_parser(
     parser.add_argument(
         "--floating",
         type=int,
-        choices=(8, 16, 32, 64),
+        choices=get_args(FLOAT_LENGTH),
         default=None,
         help="The number of floating point bits to use in the out cube. If None the input data precision is used.",
     )
