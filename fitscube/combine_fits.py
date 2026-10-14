@@ -278,6 +278,49 @@ async def check_matching_axes_coro(
 check_matching_axes = sync_wrapper(check_matching_axes_coro)
 
 
+async def check_matching_scaling_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> None:
+    """Confirm every input of an integer cube stores its data the same way.
+
+    An integer cube holds the stored values of every input under the first
+    input's BITPIX, BSCALE, BZERO and BLANK, so an input that differs would be
+    silently mis-scaled, truncated or wrapped. Float inputs are not checked.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        ValueError: If any integer image differs in BITPIX, BSCALE, BZERO or BLANK from the first
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    if headers[0]["BITPIX"] < 0:
+        return
+    check_values_match(
+        file_list,
+        [
+            (
+                header["BITPIX"],
+                header.get("BSCALE", 1.0),
+                header.get("BZERO", 0.0),
+                header.get("BLANK"),
+            )
+            for header in headers
+        ],
+        describe=lambda scaling: f"(BITPIX, BSCALE, BZERO, BLANK)={scaling}",
+        requirement=(
+            "the same BITPIX, BSCALE, BZERO and BLANK to make an integer cube "
+            "(pass float_length=32 or 64 to make a float cube instead)"
+        ),
+        exception=ValueError,
+    )
+
+
+check_matching_scaling = sync_wrapper(check_matching_scaling_coro)
+
+
 # https://stackoverflow.com/a/66082278
 def np_arange_fix(start: float, stop: float, step: float) -> NDArray[np.float64]:
     n = (stop - start) / step + 1
@@ -460,7 +503,9 @@ async def create_cube_from_scratch_coro(
         fobj.seek(file_length)
         fobj.write(b"\0")
 
-    with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
+    with fits.open(
+        output_file, mode="denywrite", memmap=True, do_not_scale_image_data=True
+    ) as hdu_list:
         hdu = hdu_list[0]
         data = hdu.data
         on_disk_shape = data.shape
@@ -507,7 +552,10 @@ async def create_output_cube_coro(
     unit = u.s if time_domain_mode else u.Hz
     ctype = "TIME" if time_domain_mode else "FREQ"
 
-    old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
+    # Only the shape is used, and a scaled image cannot be memory-mapped
+    old_data, old_header = fits.getdata(
+        old_name, header=True, memmap=True, do_not_scale_image_data=True
+    )
     sorted_specs = np.sort(specs)
     if time_domain_mode:
         logger.info("Computing time-differences")
@@ -643,6 +691,11 @@ async def create_output_cube_coro(
         bit_pix = int(float_length)
         logger.info(f"Specified {float_length=}, corresponding to {bit_pix=}")
         new_header["BITPIX"] = -abs(bit_pix)
+
+    if new_header["BITPIX"] < 0:
+        # Float planes are written as physical values
+        for k in ("BSCALE", "BZERO", "BLANK"):
+            new_header.pop(k, None)
 
     # Planes are written at an offset of (plane bytes * channel), which only
     # lands on the right plane when the spectral axis is the slowest-varying
@@ -1058,9 +1111,13 @@ def load_and_preprocess_fits_data(
     bounding_box: BoundingBox | None = None,
     invalidate_zeros: bool = False,
     wipe_with_nan: bool = False,
+    stored_values: bool = False,
 ) -> NDArray[np.floating[Any]]:
     # Use memmap=False to force the data to be read into memory - gives a speedup
-    plane: NDArray[np.floating[Any]] = fits.getdata(filename=file_path, memmap=False)
+    # stored_values skips BSCALE/BZERO, for integer cubes sharing the input scaling
+    plane: NDArray[np.floating[Any]] = fits.getdata(
+        filename=file_path, memmap=False, do_not_scale_image_data=stored_values
+    )
 
     if bounding_box is not None:
         plane = plane[
@@ -1099,6 +1156,7 @@ async def process_channel(
         bounding_box=bounding_box,
         invalidate_zeros=invalidate_zeros,
         wipe_with_nan=is_missing or blank_channel,
+        stored_values=new_header["BITPIX"] > 0,
     )
 
     if "BITPIX" in new_header:
@@ -1168,6 +1226,7 @@ async def combine_fits_coro(
 
     Raises:
         ShapeMismatchException: If the input images do not share a pixel grid
+        ValueError: If integer inputs differ in BITPIX, BSCALE, BZERO or BLANK and float_length is None
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
@@ -1176,6 +1235,8 @@ async def combine_fits_coro(
 
     await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
     await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
+    if float_length is None:
+        await check_matching_scaling_coro(file_list=file_list, max_workers=max_workers)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,

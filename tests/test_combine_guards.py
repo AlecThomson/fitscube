@@ -10,6 +10,7 @@ import pytest
 from astropy.io import fits
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.combine_fits import (
+    FLOAT_LENGTH,
     check_matching_axes,
     check_matching_shapes,
     combine_fits,
@@ -182,6 +183,7 @@ def test_blank_channels_are_created(
             "memmap",
             "lazy_load_hdus",
             "ext",
+            "do_not_scale_image_data",
         }
         if unexpected:
             msg = f"getdata() got unexpected keyword arguments {unexpected}"
@@ -425,3 +427,80 @@ def test_non_finite_specs_raise(
             create_blanks=create_blanks,
             overwrite=True,
         )
+
+
+def make_scaled_plane(
+    path: Path,
+    spec: u.Quantity,
+    stored: int,
+    bscale: float = 1.0,
+    bzero: float = 0.0,
+    blank: int | None = None,
+    dtype: Any = np.int16,
+) -> Path:
+    """Write an integer plane whose stored values are ``stored``."""
+    header = fits.getheader(make_plane(path, spec, dtype=dtype))
+    hdu = fits.PrimaryHDU(np.full((1, 1, 8, 8), stored, dtype=dtype), header=header)
+    hdu.header["BSCALE"] = bscale
+    hdu.header["BZERO"] = bzero
+    if blank is not None:
+        hdu.header["BLANK"] = blank
+    hdu.writeto(path, overwrite=True)
+    return path
+
+
+@pytest.mark.parametrize(
+    "odd_one_out",
+    [
+        {"bscale": 0.5},
+        {"bzero": 100.0},
+        {"blank": -32768, "stored": -32768},
+        {"dtype": np.int32, "stored": 100_000},
+    ],
+)
+def test_integer_inputs_must_share_scaling(
+    tmp_path: Path, specs: u.Quantity, odd_one_out: dict[str, Any]
+) -> None:
+    """An odd input was silently truncated, wrapped or had BLANK written as 0."""
+    file_list = [
+        make_scaled_plane(tmp_path / f"int_{i}.fits", spec, stored=i)
+        for i, spec in enumerate(specs[:3])
+    ]
+    file_list[1] = make_scaled_plane(
+        tmp_path / "odd.fits", specs[1], **{"stored": 5, **odd_one_out}
+    )
+    expected = [fits.getdata(path)[0, 0, 0, 0] for path in file_list]
+
+    with pytest.raises(ValueError, match="float_length"):
+        combine_fits(
+            file_list=file_list, out_cube=tmp_path / "cube.fits", overwrite=True
+        )
+
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(
+        file_list=file_list, out_cube=out_cube, overwrite=True, float_length=64
+    )
+    assert np.allclose(fits.getdata(out_cube)[:, 0, 0, 0], expected, equal_nan=True)
+
+
+@pytest.mark.parametrize("float_length", [None, 32])
+def test_shared_integer_scaling_is_kept(
+    tmp_path: Path, specs: u.Quantity, float_length: FLOAT_LENGTH | None
+) -> None:
+    """A scaled first input could not be memory-mapped, so nothing was written."""
+    file_list = [
+        make_scaled_plane(
+            tmp_path / f"int_{i}.fits", spec, stored=i, bscale=2.0, bzero=32768.0
+        )
+        for i, spec in enumerate(specs)
+    ]
+    expected = [fits.getdata(path)[0, 0, 0, 0] for path in file_list]
+
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(
+        file_list=file_list,
+        out_cube=out_cube,
+        overwrite=True,
+        float_length=float_length,
+    )
+    assert np.allclose(fits.getdata(out_cube)[:, 0, 0, 0], expected)
