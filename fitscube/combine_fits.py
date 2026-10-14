@@ -66,6 +66,10 @@ BIT_DICT = {
     8: 1,
 }
 FLOAT_LENGTH = Literal[16, 32, 64]
+# Smallest grid step accepted, as a fraction of the smallest diff
+MAX_BLANKS_PER_GAP = 16
+# Most grid points built per input value
+MAX_GRID_PER_INPUT = 1000
 
 
 def fits_dtype(bit_pix: int) -> str:
@@ -316,7 +320,9 @@ def grid_step(diffs: ArrayLike) -> float:
     overestimates the step (e.g. present channels 0, 3, 5 give ``min == 2`` but
     the true step is 1). Falls back to ``min(diffs)`` if the gcd is numerically
     unstable or does not divide every diff, so the common case is unchanged (any
-    surviving adjacent pair makes the gcd equal the minimum diff exactly).
+    surviving adjacent pair makes the gcd equal the minimum diff exactly). Also
+    falls back when the gcd is implausibly small: diffs of 1e6 and 1e6 + 2 have a
+    float gcd of 2.
 
     Args:
         diffs (ArrayLike): Differences between consecutive spec values.
@@ -337,7 +343,7 @@ def grid_step(diffs: ArrayLike) -> float:
         g = a
 
     divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
-    if g <= tol or not divides_all:
+    if g <= tol or not divides_all or g < min_diff / MAX_BLANKS_PER_GAP:
         return float(min_diff)
     return float(g)
 
@@ -354,7 +360,7 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
         specs (u.Quantity): Original frequencies/times
 
     Raises:
-        IrregularSpacingException: If a grid through the inputs would drop any of them
+        IrregularSpacingException: If a grid through the inputs would drop any of them, or is implausibly large
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
@@ -369,6 +375,14 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
 
     diffs = np.diff(specs_arr)
     step = grid_step(diffs)
+    span = specs_arr[-1] - specs_arr[0]
+    if span / step > MAX_GRID_PER_INPUT * len(specs_arr):
+        msg = (
+            f"A regular grid of step {step} {specs.unit} over {len(specs_arr)} values "
+            f"spanning {span} {specs.unit} would need {span / step + 1:.0f} channels. "
+            "Combine without blank channels."
+        )
+        raise IrregularSpacingException(msg)
     # Create a new array with the fundamental grid step
     new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], step)
     missing_chan_idx = np.logical_not(
