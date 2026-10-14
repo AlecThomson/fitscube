@@ -409,3 +409,19 @@ def test_bounding_box_can_be_supplied(tmp_path: Path, specs: u.Quantity) -> None
 
     # The weights alone would have given the full, untrimmed grid
     assert get_common_bounding_box(file_list=weights).x_span == 8
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+@pytest.mark.parametrize("create_blanks", [False, True])
+def test_non_finite_specs_raise(
+    tmp_path: Path, file_list: list[Path], bad: float, create_blanks: bool
+) -> None:
+    """NaN failed deep in the header write, and inf was written as a CHAN axis."""
+    with pytest.raises(ValueError, match="must be finite"):
+        combine_fits(
+            file_list=file_list,
+            out_cube=tmp_path / "cube.fits",
+            spec_list=[1e9, bad, 1.002e9, 1.003e9],
+            create_blanks=create_blanks,
+            overwrite=True,
+        )

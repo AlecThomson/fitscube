@@ -741,6 +741,7 @@ async def parse_specs_coro(
 
     Raises:
         ValueError: If both spec_file and spec_list are specified
+        ValueError: If any frequency/time is NaN or infinite
         KeyError: If 2D and (REFFREQ or DATE-OBS)  is not in header
         ValueError: If not 2D and FREQ is not in header
 
@@ -799,6 +800,14 @@ async def parse_specs_coro(
         file_specs = np.array([f.to(unit).value for f in list_of_specs]) * unit
 
         specs = file_specs.copy()
+
+    not_finite = np.flatnonzero(~np.isfinite(file_specs.value))
+    if len(not_finite):
+        msg = (
+            f"{spequencies.capitalize()} must be finite, but value {not_finite[0]} "
+            f"(for {file_list[not_finite[0]]}) is {file_specs[not_finite[0]]}"
+        )
+        raise ValueError(msg)
 
     if create_blanks:
         msg = f"Trying to create a blank cube with evenly spaced {spequencies}"
