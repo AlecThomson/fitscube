@@ -621,6 +621,13 @@ async def create_output_cube_coro(
     new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
     new_header[f"CTYPE{fits_idx}"] = ctype
+    if time_domain_mode:
+        # Times are UTC MJD seconds (see utc_to_mjdsec), so replace any
+        # reference time copied from the input
+        for k in ("JDREF", "JDREFI", "JDREFF", "MJDREFI", "MJDREFF", "DATEREF"):
+            new_header.pop(k, None)
+        new_header["MJDREF"] = 0.0
+        new_header["TIMESYS"] = "UTC"
 
     # Figure out the correct number of dimensions to use
     _no_of_naxis = [k for k in new_header if k.startswith("NAXIS") and k != "NAXIS"]
