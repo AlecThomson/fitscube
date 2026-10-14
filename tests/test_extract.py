@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.wcs import WCS
 from fitscube.exceptions import (
     ChannelMissingException,
     ShapeMismatchException,
@@ -419,3 +420,38 @@ def test_extract_refuses_to_overwrite_cube(tmpdir) -> None:
             ),
         )
     assert fits.getdata(cube).shape == (4, 2, 2)
+
+
+@pytest.mark.filterwarnings("ignore:'cdfix' made the change")
+@pytest.mark.parametrize(
+    "keywords",
+    [
+        {"CDELT3": None, "CUNIT3": None, "CD3_3": 1e6},
+        {"CDELT3": 5e5, "PC3_3": 2.0},
+        {"CDELT3": None, "CRVAL3": 1e6, "CRPIX3": 1000.0},
+    ],
+)
+def test_extract_follows_fits_wcs(tmpdir, keywords) -> None:
+    """Missing CDELT or CUNIT raised a KeyError, and CDi_i and PCi_i were ignored"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    with fits.open(cube, mode="update") as hdu_list:
+        for key, value in keywords.items():
+            if value is None:
+                del hdu_list[0].header[key]
+            else:
+                hdu_list[0].header[key] = value
+    cube_wcs = WCS(fits.getheader(cube))
+
+    for channel in (0, 3):
+        output_file = Path(tmpdir) / f"plane_{channel}.fits"
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=output_file
+            ),
+        )
+        plane_wcs = WCS(fits.getheader(output_file))
+        assert np.isclose(
+            plane_wcs.spectral.pixel_to_world_values(0),
+            cube_wcs.spectral.pixel_to_world_values(channel),
+        )

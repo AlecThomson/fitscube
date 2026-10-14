@@ -65,7 +65,7 @@ class TargetWCS:
     crval: float
     """The reference value stored in the header"""
     cdelt: float
-    """The step between planes"""
+    """The step between planes, with any CDi_i or PCi_i applied"""
     cunit: str
     """the unit of the target axis"""
 
@@ -251,16 +251,20 @@ def find_target_axis(
     # Remember that range upper limit is exclusive, and
     # we start counting from 1
     for axis in range(1, naxis + 1):
-        if axis_name in header[f"CTYPE{axis}"]:
+        if axis_name in header.get(f"CTYPE{axis}", ""):
             logger.info(f"Found {axis_name} at {axis=}")
+            # CDi_i replaces CDELTi, PCi_i scales it. Absent keys take FITS defaults.
+            cdelt = header.get(
+                f"CD{axis}_{axis}",
+                header.get(f"CDELT{axis}", 1.0) * header.get(f"PC{axis}_{axis}", 1.0),
+            )
             return TargetWCS(
                 axis=axis,
                 ctype=header[f"CTYPE{axis}"],
-                # FITS default when absent
                 crpix=header.get(f"CRPIX{axis}", 0.0),
-                crval=header[f"CRVAL{axis}"],
-                cdelt=header[f"CDELT{axis}"],
-                cunit=header[f"CUNIT{axis}"],
+                crval=header.get(f"CRVAL{axis}", 0.0),
+                cdelt=cdelt,
+                cunit=header.get(f"CUNIT{axis}", ""),
             )
 
     msg = "Did not find the frequency axis"
@@ -322,7 +326,13 @@ def update_header_for_target_axis(
     out_header[f"CRPIX{_idx}"] = plane_freq_wcs.crpix
     out_header[f"CRVAL{_idx}"] = plane_freq_wcs.crval
     out_header[f"CDELT{_idx}"] = plane_freq_wcs.cdelt
-    out_header[f"CUNIT{_idx}"] = plane_freq_wcs.cunit
+    # cdelt is the full step, so it goes into CDi_i, and PCi_i no longer scales it
+    if f"CD{_idx}_{_idx}" in out_header:
+        out_header[f"CD{_idx}_{_idx}"] = plane_freq_wcs.cdelt
+    if f"PC{_idx}_{_idx}" in out_header:
+        out_header[f"PC{_idx}_{_idx}"] = 1.0
+    if plane_freq_wcs.cunit:
+        out_header[f"CUNIT{_idx}"] = plane_freq_wcs.cunit
 
     if extract_beam_from_file and fits_file_contains_beam_table(
         header=extract_beam_from_file
