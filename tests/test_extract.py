@@ -394,3 +394,28 @@ def test_extract_index_outside_axis(tmpdir, channel) -> None:
                 channel_index=channel, output_path=Path(tmpdir) / "plane.fits"
             ),
         )
+
+
+def test_extract_refuses_to_overwrite_cube(tmpdir) -> None:
+    """With overwrite set, an output path naming the cube replaced it with one plane"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    # Same file under another spelling
+    same_cube = Path(tmpdir) / "." / "cube.fits"
+
+    with pytest.raises(ValueError, match="is the input cube"):
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=2, output_path=same_cube, overwrite=True
+            ),
+        )
+    with pytest.raises(ValueError, match="is the input cube"):
+        extract_planes_from_cube(
+            fits_cube=cube,
+            extract_planes_options=ExtractPlanesOptions(
+                output_paths=[Path(tmpdir) / f"p{i}.fits" for i in range(3)]
+                + [same_cube],
+                overwrite=True,
+            ),
+        )
+    assert fits.getdata(cube).shape == (4, 2, 2)

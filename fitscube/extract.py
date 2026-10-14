@@ -158,6 +158,21 @@ def get_output_path(input_path: Path, target_index: TargetIndex) -> Path:
     return output_path
 
 
+def check_output_is_not_input(fits_cube: Path, output_path: Path) -> None:
+    """Refuse to write a plane over the cube it is read from.
+
+    Args:
+        fits_cube (Path): The cube planes are read from
+        output_path (Path): Where a plane is to be written
+
+    Raises:
+        ValueError: If ``output_path`` is the cube
+    """
+    if output_path.exists() and output_path.samefile(fits_cube):
+        msg = f"Output path {output_path} is the input cube {fits_cube}"
+        raise ValueError(msg)
+
+
 def fits_file_contains_beam_table(header: fits.header.Header | Path) -> bool:
     """Consider whether a fits file contains a beam table
 
@@ -358,6 +373,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
             target_index=target_index,
         )
     )
+    check_output_is_not_input(fits_cube=fits_cube, output_path=output_path)
 
     logger.info(f"Opening {fits_cube=}")
     with fits.open(
@@ -501,6 +517,8 @@ async def extract_planes_from_cube_coro(
             raise ShapeMismatchException(msg)
         else:
             output_paths = options.output_paths
+        for output_path in output_paths:
+            check_output_is_not_input(fits_cube=fits_cube, output_path=output_path)
 
         def _write_plane(channel: int) -> None:
             plane = np.expand_dims(
