@@ -455,3 +455,51 @@ def test_extract_follows_fits_wcs(tmpdir, keywords) -> None:
             plane_wcs.spectral.pixel_to_world_values(0),
             cube_wcs.spectral.pixel_to_world_values(channel),
         )
+
+
+def test_extract_planes_time_cube(timecube_path, tmpdir) -> None:
+    """Only a FREQ axis was looked for, so time cubes could not be split"""
+    output_paths = [Path(tmpdir) / f"t{i}.fits" for i in range(724)]
+    extract_planes_from_cube(
+        fits_cube=timecube_path,
+        extract_planes_options=ExtractPlanesOptions(output_paths=output_paths),
+    )
+
+    single = Path(tmpdir) / "single.fits"
+    extract_plane_from_cube(
+        fits_cube=timecube_path,
+        extract_options=ExtractOptions(time_index=200, output_path=single),
+    )
+    assert np.array_equal(
+        fits.getdata(output_paths[200]), fits.getdata(single), equal_nan=True
+    )
+    assert fits.getheader(output_paths[200]) == fits.getheader(single)
+    assert get_output_path(
+        timecube_path, create_target_index(time_index=3)
+    ).name.endswith("timestep-3.fits")
+
+
+def test_extract_planes_skips_degenerate_freq(tmpdir) -> None:
+    """A time cube built from images keeps their one-plane FREQ axis"""
+    cube = Path(tmpdir) / "cube.fits"
+    header = fits.Header()
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CTYPE3"] = "FREQ"
+    header["CTYPE4"] = "TIME"
+    header["CDELT4"] = 10.0
+    fits.writeto(
+        cube,
+        np.arange(3, dtype=np.float32)[:, None, None, None] * np.ones((3, 1, 2, 2)),
+        header,
+    )
+
+    output_paths = extract_planes_from_cube(
+        fits_cube=cube,
+        extract_planes_options=ExtractPlanesOptions(
+            output_paths=[Path(tmpdir) / f"t{i}.fits" for i in range(3)]
+        ),
+    )
+    for timestep, path in enumerate(output_paths):
+        assert fits.getdata(path).shape == (1, 1, 2, 2)
+        assert np.all(fits.getdata(path) == timestep)

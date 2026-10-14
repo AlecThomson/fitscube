@@ -271,6 +271,42 @@ def find_target_axis(
     raise TargetAxisMissingException(msg)
 
 
+def find_plane_axis(header: fits.header.Header) -> tuple[TargetWCS, str]:
+    """Find the FREQ or TIME axis to split a cube along.
+
+    Args:
+        header (fits.header.Header): The header from the fits cube
+
+    Raises:
+        TargetAxisMissingException: If there is neither a FREQ nor a TIME axis
+        ValueError: If both the FREQ and TIME axes are longer than one
+
+    Returns:
+        tuple[TargetWCS, str]: The axis, and its name (FREQ or TIME)
+    """
+    found: dict[str, TargetWCS] = {}
+    for axis_name in ("FREQ", "TIME"):
+        try:
+            found[axis_name] = find_target_axis(header=header, target_index=axis_name)
+        except TargetAxisMissingException:
+            continue
+    if not found:
+        msg = "Did not find a FREQ or TIME axis"
+        raise TargetAxisMissingException(msg)
+
+    # A time cube made from images keeps their degenerate FREQ axis
+    long_axes = [
+        axis_name
+        for axis_name, target_wcs in found.items()
+        if header[f"NAXIS{target_wcs.axis}"] > 1
+    ]
+    if len(long_axes) > 1:
+        msg = f"Both {long_axes} axes have more than one plane, so cannot pick one"
+        raise ValueError(msg)
+    axis_name = long_axes[0] if long_axes else next(iter(found))
+    return found[axis_name], axis_name
+
+
 def create_plane_target_wcs(
     original_freq_wcs: TargetWCS, target_index: int | TargetIndex
 ) -> TargetWCS:
@@ -457,17 +493,17 @@ def read_beam_table(open_fits: fits.HDUList, hdu_index: int = 0) -> Beams | None
 def _plane_header(
     header: fits.header.Header,
     target_wcs: TargetWCS,
-    channel_index: int,
+    target_index: TargetIndex,
     beams: Beams | None,
 ) -> fits.header.Header:
-    """The header of a single extracted channel, beam included"""
+    """The header of a single extracted plane, beam included"""
     out_header = update_header_for_target_axis(
         header=header,
         target_wcs=target_wcs,
-        target_index=create_target_index(channel_index=channel_index),
+        target_index=target_index,
     )
     if beams is not None:
-        beam = beams[channel_index]
+        beam = beams[target_index.axis_index]
         out_header["BMAJ"] = beam.major.to(u.deg).value
         out_header["BMIN"] = beam.minor.to(u.deg).value
         out_header["BPA"] = beam.pa.to(u.deg).value
@@ -481,7 +517,7 @@ def _plane_header(
 async def extract_planes_from_cube_coro(
     fits_cube: Path, extract_planes_options: ExtractPlanesOptions | None = None
 ) -> list[Path]:
-    """Extract every channel of a cube into its own file.
+    """Extract every channel or timestep of a cube into its own file.
 
     Calling ``extract_plane_from_cube`` once per channel reopens the cube and
     re-reads its whole beam table each time, which grows with the square of the
@@ -493,6 +529,7 @@ async def extract_planes_from_cube_coro(
 
     Raises:
         ShapeMismatchException: If the supplied output paths do not match the channel count
+        ValueError: If both the FREQ and TIME axes are longer than one
 
     Returns:
         list[Path]: The output file of each channel, in channel order
@@ -505,19 +542,20 @@ async def extract_planes_from_cube_coro(
     ) as open_fits:
         header = open_fits[options.hdu_index].header
         data = open_fits[options.hdu_index].data
-        target_wcs = find_target_axis(header=header)
-        channels = count_cube_planes(header=header)
+        target_wcs, axis_name = find_plane_axis(header=header)
+        channels = int(header[f"NAXIS{target_wcs.axis}"])
+        index_key = "time_index" if axis_name == "TIME" else "channel_index"
+        target_indices = [
+            create_target_index(**{index_key: channel}) for channel in range(channels)
+        ]
         # The FITS axis order is reversed against the numpy one
         cube_axis = data.ndim - target_wcs.axis
         beams = read_beam_table(open_fits=open_fits, hdu_index=options.hdu_index)
 
         if options.output_paths is None:
             output_paths = [
-                get_output_path(
-                    input_path=fits_cube,
-                    target_index=create_target_index(channel_index=channel),
-                )
-                for channel in range(channels)
+                get_output_path(input_path=fits_cube, target_index=target_index)
+                for target_index in target_indices
             ]
         elif len(options.output_paths) != channels:
             msg = (
@@ -540,7 +578,7 @@ async def extract_planes_from_cube_coro(
                 header=_plane_header(
                     header=header,
                     target_wcs=target_wcs,
-                    channel_index=channel,
+                    target_index=target_indices[channel],
                     beams=beams,
                 ),
                 overwrite=options.overwrite,
