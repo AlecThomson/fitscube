@@ -137,3 +137,12 @@ def test_huge_grids_are_refused():
     with pytest.raises(IrregularSpacingException, match="would need"):
         # A unit step over a 1e6 span would be a million mostly blank channels
         even_spacing(np.array([0.0, 1.0, 2.0, 1e6]) * u.Hz)
+
+
+def test_even_spacing_narrow_channels():
+    # 1.16 kHz zoom channels at 1.4 GHz, one missing. A 10 kHz match tolerance
+    # would put every input on several grid points.
+    specs = (1.4e9 + np.delete(np.arange(64), 10) * 1157.4) * u.Hz
+    new_specs, missing_chan_idx = even_spacing(specs)
+    assert len(new_specs) == 64
+    assert np.flatnonzero(missing_chan_idx).tolist() == [10]

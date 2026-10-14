@@ -358,14 +358,15 @@ def isin_close(
         NDArray[np.bool_]: Boolean array
     """
     if time_domain_mode:
-        # the following should be sufficient to test integration times to ~5ms accuracy
+        # ~0.5 s for MJD seconds, so integrations of a second or more are told apart
         rtol = 1e-10
         atol = 1e-9
     else:
-        # defaults for np.isclose
-        rtol = 1e-5
-        atol = 1e-9
-    return np.isclose(element[:, None], test_element, atol, rtol).any(1)
+        # ~1 Hz at 1 GHz. The np.isclose default of rtol=1e-5 (10 kHz) would
+        # match several kHz-wide zoom channels and snap off-grid inputs.
+        rtol = 1e-9
+        atol = 1e-5
+    return np.isclose(element[:, None], test_element, rtol=rtol, atol=atol).any(1)
 
 
 def grid_step(diffs: ArrayLike) -> float:

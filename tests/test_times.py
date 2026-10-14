@@ -8,7 +8,7 @@ import pytest
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
-from fitscube.combine_fits import combine_fits, parse_specs
+from fitscube.combine_fits import combine_fits, even_spacing, parse_specs
 
 
 def test_parse_specs(file_list: list[Path], even_specs: u.Quantity):
@@ -257,3 +257,12 @@ def test_time_axis_reference_is_set(time_image_paths, tmpdir) -> None:
     date_obs = Time(fits.getheader(time_image_paths[0])["DATE-OBS"], scale="utc")
     # UTC MJD seconds skip leap seconds, which a FITS reader counts (37 s since 1972)
     assert abs(first_time - date_obs) < 60 * u.s
+
+
+def test_even_spacing_one_second_steps():
+    """rtol and atol were passed to np.isclose swapped, giving a ~5 s tolerance
+    that matched every grid point of a 1 s grid"""
+    times = (5.18e9 + np.array([0.0, 1.0, 3.0, 4.0])) * u.s
+    new_times, missing_chan_idx = even_spacing(times, time_domain_mode=True)
+    assert len(new_times) == 5
+    assert np.array_equal(missing_chan_idx, [False, False, True, False, False])
