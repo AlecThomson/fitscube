@@ -8,6 +8,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.wcs import WCS
 from fitscube.bounding_box import get_common_bounding_box
 from fitscube.combine_fits import (
     FLOAT_LENGTH,
@@ -504,3 +505,22 @@ def test_shared_integer_scaling_is_kept(
         float_length=float_length,
     )
     assert np.allclose(fits.getdata(out_cube)[:, 0, 0, 0], expected)
+
+
+def test_cd_matrix_carries_the_step(tmp_path: Path, specs: u.Quantity) -> None:
+    """CDi_i overrides CDELTi, and was set to 1 for the spectral axis."""
+    file_list = []
+    for i, spec in enumerate(specs):
+        path = make_plane(tmp_path / f"cd_{i}.fits", spec, value=float(i))
+        with fits.open(path, mode="update") as hdu_list:
+            header = hdu_list[0].header
+            for axis in range(1, 5):
+                header[f"CD{axis}_{axis}"] = header.pop(f"CDELT{axis}")
+        file_list.append(path)
+
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+
+    wcs = WCS(fits.getheader(out_cube))
+    out_specs = wcs.spectral.pixel_to_world(np.arange(len(specs)))
+    assert np.allclose(out_specs.to(u.Hz).value, specs.to(u.Hz).value)

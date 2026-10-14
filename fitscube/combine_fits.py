@@ -637,13 +637,6 @@ async def create_output_cube_coro(
         key = f"{k}{fits_idx}"
         logger.debug(f"{key}={new_header[key]}")
 
-    # Add extra transform fields for consistency
-    if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
-        transform_type = "CD" if "CD1_1" in new_header else "PC"
-        pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
-        logger.info(f"Adding {pv1} to header")
-        new_header[pv1] = 1.0
-
     if ignore_spec or not even_spec:
         logger.info(
             f"Ignore the spequency information, {ignore_spec=} or {not even_spec=}"
@@ -652,6 +645,16 @@ async def create_output_cube_coro(
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
+
+    # Add extra transform fields for consistency. A CD matrix replaces CDELT,
+    # so it must carry the step itself.
+    if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
+        transform_type = "CD" if "CD1_1" in new_header else "PC"
+        pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
+        logger.info(f"Adding {pv1} to header")
+        new_header[pv1] = (
+            new_header[f"CDELT{fits_idx}"] if transform_type == "CD" else 1.0
+        )
 
     if has_beams and not single_beam:
         tiny = np.finfo(np.float32).tiny
