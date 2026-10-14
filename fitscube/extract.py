@@ -60,8 +60,8 @@ class TargetWCS:
     """The axis count that the frequency corresponds to"""
     ctype: str
     """The FITS WCS key name"""
-    crpix: int
-    """The reference index position"""
+    crpix: float
+    """The reference index position (FITS 1-based)"""
     crval: float
     """The reference value stored in the header"""
     cdelt: float
@@ -241,7 +241,8 @@ def find_target_axis(
             return TargetWCS(
                 axis=axis,
                 ctype=header[f"CTYPE{axis}"],
-                crpix=header[f"CRPIX{axis}"],
+                # FITS default when absent
+                crpix=header.get(f"CRPIX{axis}", 0.0),
                 crval=header[f"CRVAL{axis}"],
                 cdelt=header[f"CDELT{axis}"],
                 cunit=header[f"CUNIT{axis}"],
@@ -264,7 +265,10 @@ def create_plane_target_wcs(
         TargetWCS: The frequency information for a channel
     """
     index = target_index if isinstance(target_index, int) else target_index.axis_index
-    update_index = original_freq_wcs.crval + (index * original_freq_wcs.cdelt)
+    # FITS pixels are 1-based, so the 0-based index is pixel index + 1
+    update_index = original_freq_wcs.crval + (
+        (index + 1 - original_freq_wcs.crpix) * original_freq_wcs.cdelt
+    )
     return TargetWCS(
         axis=original_freq_wcs.axis,
         ctype=original_freq_wcs.ctype,
@@ -371,8 +375,8 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     target_axis_wcs = find_target_axis(header=header, target_index=target_index)
     target_cube_index = len(data.shape) - target_axis_wcs.axis
 
-    if target_index.axis_index > data.shape[target_cube_index]:
-        msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}, axis shape of {data.shape[target_axis_wcs.axis - 1]}"
+    if not 0 <= target_index.axis_index < data.shape[target_cube_index]:
+        msg = f"{target_index.axis_index=} outside of {target_index.axis_name} axis of {data.shape=}, axis shape of {data.shape[target_cube_index]}"
         raise ChannelMissingException(msg)
 
     # Get the channel index requested

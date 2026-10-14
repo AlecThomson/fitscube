@@ -339,3 +339,58 @@ def test_extract_planes_output_path_count(cube_path, tmpdir) -> None:
             cube_path,
             ExtractPlanesOptions(output_paths=[Path(tmpdir) / "only_one.fits"]),
         )
+
+
+def _write_crpix_cube(path: Path, crpix: float | None) -> Path:
+    """A 4 channel (FREQ, DEC, RA) cube whose reference pixel is not 1"""
+    header = fits.Header()
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CTYPE3"] = "FREQ"
+    header["CRVAL3"] = 1e9
+    header["CDELT3"] = 1e6
+    header["CUNIT3"] = "Hz"
+    if crpix is not None:
+        header["CRPIX3"] = crpix
+    data = np.arange(4, dtype=np.float32)[:, None, None] * np.ones((4, 2, 2))
+    fits.writeto(path, data=data, header=header)
+    return path
+
+
+@pytest.mark.parametrize(("crpix", "expected"), [(3.0, 0.998e9), (None, 1.001e9)])
+def test_extract_respects_crpix(tmpdir, crpix, expected) -> None:
+    """The plane value used to ignore CRPIX, i.e. assume CRPIX = 1"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", crpix)
+
+    output_file = Path(tmpdir) / "plane.fits"
+    extract_plane_from_cube(
+        fits_cube=cube,
+        extract_options=ExtractOptions(channel_index=0, output_path=output_file),
+    )
+    header = fits.getheader(output_file)
+    assert header["CRPIX3"] == 1
+    assert np.isclose(header["CRVAL3"], expected)
+
+    plane_paths = extract_planes_from_cube(
+        fits_cube=cube,
+        extract_planes_options=ExtractPlanesOptions(
+            output_paths=[Path(tmpdir) / f"p{i}.fits" for i in range(4)]
+        ),
+    )
+    for channel, plane_path in enumerate(plane_paths):
+        assert np.isclose(
+            fits.getheader(plane_path)["CRVAL3"], expected + channel * 1e6
+        )
+
+
+@pytest.mark.parametrize("channel", [4, -1])
+def test_extract_index_outside_axis(tmpdir, channel) -> None:
+    """One past the end hit an IndexError, and -1 got the wrong CRVAL"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    with pytest.raises(ChannelMissingException):
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=Path(tmpdir) / "plane.fits"
+            ),
+        )
