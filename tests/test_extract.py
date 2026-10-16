@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.wcs import WCS
 from fitscube.exceptions import (
     ChannelMissingException,
     ShapeMismatchException,
@@ -339,3 +340,166 @@ def test_extract_planes_output_path_count(cube_path, tmpdir) -> None:
             cube_path,
             ExtractPlanesOptions(output_paths=[Path(tmpdir) / "only_one.fits"]),
         )
+
+
+def _write_crpix_cube(path: Path, crpix: float | None) -> Path:
+    """A 4 channel (FREQ, DEC, RA) cube whose reference pixel is not 1"""
+    header = fits.Header()
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CTYPE3"] = "FREQ"
+    header["CRVAL3"] = 1e9
+    header["CDELT3"] = 1e6
+    header["CUNIT3"] = "Hz"
+    if crpix is not None:
+        header["CRPIX3"] = crpix
+    data = np.arange(4, dtype=np.float32)[:, None, None] * np.ones((4, 2, 2))
+    fits.writeto(path, data=data, header=header)
+    return path
+
+
+@pytest.mark.parametrize(("crpix", "expected"), [(3.0, 0.998e9), (None, 1.001e9)])
+def test_extract_respects_crpix(tmpdir, crpix, expected) -> None:
+    """The plane value used to ignore CRPIX, i.e. assume CRPIX = 1"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", crpix)
+
+    output_file = Path(tmpdir) / "plane.fits"
+    extract_plane_from_cube(
+        fits_cube=cube,
+        extract_options=ExtractOptions(channel_index=0, output_path=output_file),
+    )
+    header = fits.getheader(output_file)
+    assert header["CRPIX3"] == 1
+    assert np.isclose(header["CRVAL3"], expected)
+
+    plane_paths = extract_planes_from_cube(
+        fits_cube=cube,
+        extract_planes_options=ExtractPlanesOptions(
+            output_paths=[Path(tmpdir) / f"p{i}.fits" for i in range(4)]
+        ),
+    )
+    for channel, plane_path in enumerate(plane_paths):
+        assert np.isclose(
+            fits.getheader(plane_path)["CRVAL3"], expected + channel * 1e6
+        )
+
+
+@pytest.mark.parametrize("channel", [4, -1])
+def test_extract_index_outside_axis(tmpdir, channel) -> None:
+    """One past the end hit an IndexError, and -1 got the wrong CRVAL"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    with pytest.raises(ChannelMissingException):
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=Path(tmpdir) / "plane.fits"
+            ),
+        )
+
+
+def test_extract_refuses_to_overwrite_cube(tmpdir) -> None:
+    """With overwrite set, an output path naming the cube replaced it with one plane"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    # Same file under another spelling
+    same_cube = Path(tmpdir) / "." / "cube.fits"
+
+    with pytest.raises(ValueError, match="is the input cube"):
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=2, output_path=same_cube, overwrite=True
+            ),
+        )
+    with pytest.raises(ValueError, match="is the input cube"):
+        extract_planes_from_cube(
+            fits_cube=cube,
+            extract_planes_options=ExtractPlanesOptions(
+                output_paths=[Path(tmpdir) / f"p{i}.fits" for i in range(3)]
+                + [same_cube],
+                overwrite=True,
+            ),
+        )
+    assert fits.getdata(cube).shape == (4, 2, 2)
+
+
+@pytest.mark.filterwarnings("ignore:'cdfix' made the change")
+@pytest.mark.parametrize(
+    "keywords",
+    [
+        {"CDELT3": None, "CUNIT3": None, "CD3_3": 1e6},
+        {"CDELT3": 5e5, "PC3_3": 2.0},
+        {"CDELT3": None, "CRVAL3": 1e6, "CRPIX3": 1000.0},
+    ],
+)
+def test_extract_follows_fits_wcs(tmpdir, keywords) -> None:
+    """Missing CDELT or CUNIT raised a KeyError, and CDi_i and PCi_i were ignored"""
+    cube = _write_crpix_cube(Path(tmpdir) / "cube.fits", 1.0)
+    with fits.open(cube, mode="update") as hdu_list:
+        for key, value in keywords.items():
+            if value is None:
+                del hdu_list[0].header[key]
+            else:
+                hdu_list[0].header[key] = value
+    cube_wcs = WCS(fits.getheader(cube))
+
+    for channel in (0, 3):
+        output_file = Path(tmpdir) / f"plane_{channel}.fits"
+        extract_plane_from_cube(
+            fits_cube=cube,
+            extract_options=ExtractOptions(
+                channel_index=channel, output_path=output_file
+            ),
+        )
+        plane_wcs = WCS(fits.getheader(output_file))
+        assert np.isclose(
+            plane_wcs.spectral.pixel_to_world_values(0),
+            cube_wcs.spectral.pixel_to_world_values(channel),
+        )
+
+
+def test_extract_planes_time_cube(timecube_path, tmpdir) -> None:
+    """Only a FREQ axis was looked for, so time cubes could not be split"""
+    output_paths = [Path(tmpdir) / f"t{i}.fits" for i in range(724)]
+    extract_planes_from_cube(
+        fits_cube=timecube_path,
+        extract_planes_options=ExtractPlanesOptions(output_paths=output_paths),
+    )
+
+    single = Path(tmpdir) / "single.fits"
+    extract_plane_from_cube(
+        fits_cube=timecube_path,
+        extract_options=ExtractOptions(time_index=200, output_path=single),
+    )
+    assert np.array_equal(
+        fits.getdata(output_paths[200]), fits.getdata(single), equal_nan=True
+    )
+    assert fits.getheader(output_paths[200]) == fits.getheader(single)
+    assert get_output_path(
+        timecube_path, create_target_index(time_index=3)
+    ).name.endswith("timestep-3.fits")
+
+
+def test_extract_planes_skips_degenerate_freq(tmpdir) -> None:
+    """A time cube built from images keeps their one-plane FREQ axis"""
+    cube = Path(tmpdir) / "cube.fits"
+    header = fits.Header()
+    header["CTYPE1"] = "RA---SIN"
+    header["CTYPE2"] = "DEC--SIN"
+    header["CTYPE3"] = "FREQ"
+    header["CTYPE4"] = "TIME"
+    header["CDELT4"] = 10.0
+    fits.writeto(
+        cube,
+        np.arange(3, dtype=np.float32)[:, None, None, None] * np.ones((3, 1, 2, 2)),
+        header,
+    )
+
+    output_paths = extract_planes_from_cube(
+        fits_cube=cube,
+        extract_planes_options=ExtractPlanesOptions(
+            output_paths=[Path(tmpdir) / f"t{i}.fits" for i in range(3)]
+        ),
+    )
+    for timestep, path in enumerate(output_paths):
+        assert fits.getdata(path).shape == (1, 1, 2, 2)
+        assert np.all(fits.getdata(path) == timestep)

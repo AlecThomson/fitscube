@@ -22,7 +22,7 @@ from collections.abc import Callable
 from functools import partial
 from io import BufferedRandom
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
+from typing import IO, Any, Literal, NamedTuple, TypeVar, cast, get_args
 
 import astropy.units as u
 import numpy as np
@@ -65,7 +65,7 @@ BIT_DICT = {
     16: 2,
     8: 1,
 }
-FLOAT_LENGTH = Literal[16, 32, 64]
+FLOAT_LENGTH = Literal[32, 64]
 
 
 def fits_dtype(bit_pix: int) -> str:
@@ -84,6 +84,20 @@ def fits_dtype(bit_pix: int) -> str:
 
 warnings.filterwarnings("ignore", category=UserWarning, module="astropy.io.fits")
 warnings.filterwarnings("ignore", category=VerifyWarning)
+
+
+def check_float_length(float_length: int | None) -> None:
+    """Check that float_length is a FITS float width.
+
+    Args:
+        float_length (int | None): Requested float width in bits
+
+    Raises:
+        ValueError: If float_length is not None, 32 or 64
+    """
+    if float_length not in (None, *get_args(FLOAT_LENGTH)):
+        msg = f"{float_length=} is not a FITS float width. Use 32 or 64."
+        raise ValueError(msg)
 
 
 class InitResult(NamedTuple):
@@ -274,6 +288,49 @@ async def check_matching_axes_coro(
 check_matching_axes = sync_wrapper(check_matching_axes_coro)
 
 
+async def check_matching_scaling_coro(
+    file_list: list[Path],
+    max_workers: int | None = None,
+) -> None:
+    """Confirm every input of an integer cube stores its data the same way.
+
+    An integer cube holds the stored values of every input under the first
+    input's BITPIX, BSCALE, BZERO and BLANK, so an input that differs would be
+    silently mis-scaled, truncated or wrapped. Float inputs are not checked.
+
+    Args:
+        file_list (list[Path]): The FITS images to check
+        max_workers (int | None, optional): Maximum number of concurrent header reads. Defaults to None.
+
+    Raises:
+        ValueError: If any integer image differs in BITPIX, BSCALE, BZERO or BLANK from the first
+    """
+    headers = await read_headers_coro(file_list, max_workers=max_workers)
+    if headers[0]["BITPIX"] < 0:
+        return
+    check_values_match(
+        file_list,
+        [
+            (
+                header["BITPIX"],
+                header.get("BSCALE", 1.0),
+                header.get("BZERO", 0.0),
+                header.get("BLANK"),
+            )
+            for header in headers
+        ],
+        describe=lambda scaling: f"(BITPIX, BSCALE, BZERO, BLANK)={scaling}",
+        requirement=(
+            "the same BITPIX, BSCALE, BZERO and BLANK to make an integer cube "
+            "(pass float_length=32 or 64 to make a float cube instead)"
+        ),
+        exception=ValueError,
+    )
+
+
+check_matching_scaling = sync_wrapper(check_matching_scaling_coro)
+
+
 # https://stackoverflow.com/a/66082278
 def np_arange_fix(start: float, stop: float, step: float) -> NDArray[np.float64]:
     n = (stop - start) / step + 1
@@ -297,14 +354,15 @@ def isin_close(
         NDArray[np.bool_]: Boolean array
     """
     if time_domain_mode:
-        # the following should be sufficient to test integration times to ~5ms accuracy
+        # ~0.5 s for MJD seconds, so integrations of a second or more are told apart
         rtol = 1e-10
         atol = 1e-9
     else:
-        # defaults for np.isclose
-        rtol = 1e-5
-        atol = 1e-9
-    return np.isclose(element[:, None], test_element, atol, rtol).any(1)
+        # ~1 Hz at 1 GHz. The np.isclose default of rtol=1e-5 (10 kHz) would
+        # match several kHz-wide zoom channels and snap off-grid inputs.
+        rtol = 1e-9
+        atol = 1e-5
+    return np.isclose(element[:, None], test_element, rtol=rtol, atol=atol).any(1)
 
 
 def grid_step(diffs: ArrayLike) -> float:
@@ -316,7 +374,9 @@ def grid_step(diffs: ArrayLike) -> float:
     overestimates the step (e.g. present channels 0, 3, 5 give ``min == 2`` but
     the true step is 1). Falls back to ``min(diffs)`` if the gcd is numerically
     unstable or does not divide every diff, so the common case is unchanged (any
-    surviving adjacent pair makes the gcd equal the minimum diff exactly).
+    surviving adjacent pair makes the gcd equal the minimum diff exactly). Also
+    falls back when the gcd is implausibly small: diffs of 1e6 and 1e6 + 2 have a
+    float gcd of 2.
 
     Args:
         diffs (ArrayLike): Differences between consecutive spec values.
@@ -337,7 +397,8 @@ def grid_step(diffs: ArrayLike) -> float:
         g = a
 
     divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
-    if g <= tol or not divides_all:
+    # A gcd far below every diff is float noise, not a real channel width.
+    if g <= tol or not divides_all or g * 16 < min_diff:
         return float(min_diff)
     return float(g)
 
@@ -354,7 +415,7 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
         specs (u.Quantity): Original frequencies/times
 
     Raises:
-        IrregularSpacingException: If a grid through the inputs would drop any of them
+        IrregularSpacingException: If a grid through the inputs would drop any of them, or is implausibly large
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
@@ -369,6 +430,15 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
 
     diffs = np.diff(specs_arr)
     step = grid_step(diffs)
+    span = specs_arr[-1] - specs_arr[0]
+    max_channels = 1000 * len(specs_arr)
+    if span / step > max_channels:
+        msg = (
+            f"A regular grid of step {step} {specs.unit} over {len(specs_arr)} values "
+            f"spanning {span} {specs.unit} would need {span / step + 1:.0f} channels. "
+            "Combine without blank channels."
+        )
+        raise IrregularSpacingException(msg)
     # Create a new array with the fundamental grid step
     new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], step)
     missing_chan_idx = np.logical_not(
@@ -446,7 +516,9 @@ async def create_cube_from_scratch_coro(
         fobj.seek(file_length)
         fobj.write(b"\0")
 
-    with fits.open(output_file, mode="denywrite", memmap=True) as hdu_list:
+    with fits.open(
+        output_file, mode="denywrite", memmap=True, do_not_scale_image_data=True
+    ) as hdu_list:
         hdu = hdu_list[0]
         data = hdu.data
         on_disk_shape = data.shape
@@ -483,7 +555,7 @@ async def create_output_cube_coro(
         overwrite (bool, optional): If True the out the output cube will overwrite any existing file. Defaults to False.
         time_domain_mode (bool, optional): Whether to join images via the DATE-OBS (e.g. time) axis. If False cube joined along frequency axis. Defaults to False.
         bounding_box (BoundingBox | None, optional): Whether a trimming operation should be applied to input images. If a BoundingBox is supplied this will be used to update the reference pixel position and data shape indicators. Defaults to None.
-        float_length (Literal[16, 32, 64] | None, optional): The precision of the output data. If None drawn from input data. Otherwise values accepted are 16, 32 and 64. Defaults to None.
+        float_length (Literal[32, 64] | None, optional): The precision of the output data. If None drawn from input data. Otherwise values accepted are 32 and 64. Defaults to None.
 
     Returns:
         InitResult: Details of the output cube, including the output header
@@ -493,7 +565,10 @@ async def create_output_cube_coro(
     unit = u.s if time_domain_mode else u.Hz
     ctype = "TIME" if time_domain_mode else "FREQ"
 
-    old_data, old_header = fits.getdata(old_name, header=True, memmap=True)
+    # Only the shape is used, and a scaled image cannot be memory-mapped
+    old_data, old_header = fits.getdata(
+        old_name, header=True, memmap=True, do_not_scale_image_data=True
+    )
     sorted_specs = np.sort(specs)
     if time_domain_mode:
         logger.info("Computing time-differences")
@@ -559,6 +634,13 @@ async def create_output_cube_coro(
     new_header[f"CDELT{fits_idx}"] = np.median(np.diff(specs)).value
     new_header[f"CUNIT{fits_idx}"] = f"{unit:fits}"
     new_header[f"CTYPE{fits_idx}"] = ctype
+    if time_domain_mode:
+        # Times are UTC MJD seconds (see utc_to_mjdsec), so replace any
+        # reference time copied from the input
+        for k in ("JDREF", "JDREFI", "JDREFF", "MJDREFI", "MJDREFF", "DATEREF"):
+            new_header.pop(k, None)
+        new_header["MJDREF"] = 0.0
+        new_header["TIMESYS"] = "UTC"
 
     # Figure out the correct number of dimensions to use
     _no_of_naxis = [k for k in new_header if k.startswith("NAXIS") and k != "NAXIS"]
@@ -568,13 +650,6 @@ async def create_output_cube_coro(
         key = f"{k}{fits_idx}"
         logger.debug(f"{key}={new_header[key]}")
 
-    # Add extra transform fields for consistency
-    if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
-        transform_type = "CD" if "CD1_1" in new_header else "PC"
-        pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
-        logger.info(f"Adding {pv1} to header")
-        new_header[pv1] = 1.0
-
     if ignore_spec or not even_spec:
         logger.info(
             f"Ignore the spequency information, {ignore_spec=} or {not even_spec=}"
@@ -583,6 +658,16 @@ async def create_output_cube_coro(
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
+
+    # Add extra transform fields for consistency. A CD matrix replaces CDELT,
+    # so it must carry the step itself.
+    if ("CD1_1" in new_header or "PC1_1" in new_header) and fits_idx != 1:
+        transform_type = "CD" if "CD1_1" in new_header else "PC"
+        pv1 = f"{transform_type}{fits_idx}_{fits_idx}"
+        logger.info(f"Adding {pv1} to header")
+        new_header[pv1] = (
+            new_header[f"CDELT{fits_idx}"] if transform_type == "CD" else 1.0
+        )
 
     if has_beams and not single_beam:
         tiny = np.finfo(np.float32).tiny
@@ -623,12 +708,15 @@ async def create_output_cube_coro(
         # 64        numpy.int64
         # -32       numpy.float32
         # -64       numpy.float64
-        assert float_length in list(BIT_DICT.keys()), (
-            f"{float_length=} not in {BIT_DICT=}"
-        )
+        check_float_length(float_length)
         bit_pix = int(float_length)
         logger.info(f"Specified {float_length=}, corresponding to {bit_pix=}")
         new_header["BITPIX"] = -abs(bit_pix)
+
+    if new_header["BITPIX"] < 0:
+        # Float planes are written as physical values
+        for k in ("BSCALE", "BZERO", "BLANK"):
+            new_header.pop(k, None)
 
     # Planes are written at an offset of (plane bytes * channel), which only
     # lands on the right plane when the spectral axis is the slowest-varying
@@ -727,6 +815,7 @@ async def parse_specs_coro(
 
     Raises:
         ValueError: If both spec_file and spec_list are specified
+        ValueError: If any frequency/time is NaN or infinite
         KeyError: If 2D and (REFFREQ or DATE-OBS)  is not in header
         ValueError: If not 2D and FREQ is not in header
 
@@ -785,6 +874,14 @@ async def parse_specs_coro(
         file_specs = np.array([f.to(unit).value for f in list_of_specs]) * unit
 
         specs = file_specs.copy()
+
+    not_finite = np.flatnonzero(~np.isfinite(file_specs.value))
+    if len(not_finite):
+        msg = (
+            f"{spequencies.capitalize()} must be finite, but value {not_finite[0]} "
+            f"(for {file_list[not_finite[0]]}) is {file_specs[not_finite[0]]}"
+        )
+        raise ValueError(msg)
 
     if create_blanks:
         msg = f"Trying to create a blank cube with evenly spaced {spequencies}"
@@ -1035,9 +1132,13 @@ def load_and_preprocess_fits_data(
     bounding_box: BoundingBox | None = None,
     invalidate_zeros: bool = False,
     wipe_with_nan: bool = False,
+    stored_values: bool = False,
 ) -> NDArray[np.floating[Any]]:
     # Use memmap=False to force the data to be read into memory - gives a speedup
-    plane: NDArray[np.floating[Any]] = fits.getdata(filename=file_path, memmap=False)
+    # stored_values skips BSCALE/BZERO, for integer cubes sharing the input scaling
+    plane: NDArray[np.floating[Any]] = fits.getdata(
+        filename=file_path, memmap=False, do_not_scale_image_data=stored_values
+    )
 
     if bounding_box is not None:
         plane = plane[
@@ -1051,6 +1152,8 @@ def load_and_preprocess_fits_data(
         return np.full(plane.shape, np.nan)
 
     if invalidate_zeros:
+        # Integer data cannot hold NaN
+        plane = plane.astype(np.result_type(plane.dtype, np.float32))
         plane[plane == 0.0] = np.nan
 
     return plane
@@ -1076,6 +1179,7 @@ async def process_channel(
         bounding_box=bounding_box,
         invalidate_zeros=invalidate_zeros,
         wipe_with_nan=is_missing or blank_channel,
+        stored_values=new_header["BITPIX"] > 0,
     )
 
     if "BITPIX" in new_header:
@@ -1140,19 +1244,31 @@ async def combine_fits_coro(
         time_domain_mode (bool, optional): Work in time domain mode - make a time-cube. Default = False.
         bounding_box (bool | BoundingBox, optional): Clip invalid/padded pixels when crafting the fits cube. When True an extra read of the input data is needed, but output cube is smaller. A BoundingBox may be supplied directly (see `get_common_bounding_box`) to force several cubes onto an identical pixel grid. Defaults to False.
         invalidate_zeros (bool, optionals): Set pixels whose values are exactly zero to NaNs. Defaults to False.
-        float_length (Literal[16, 32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
+        float_length (Literal[32, 64] | None, optional): The floating point precision in bits to use when creating the output cube. If None the size of the input data are used. Defaults to None.
         blank_zero_beams (bool, optional): Blank (NaN) any input image whose restoring beam is exactly zero. wsclean writes such a beam when a plane holds no fitted PSF - e.g. the model image `-fit-spectral-pol` plants into a channel - and those planes are not comparable to the rest of the cube. Defaults to True.
 
     Raises:
         ShapeMismatchException: If the input images do not share a pixel grid
+        ValueError: If integer inputs differ in BITPIX, BSCALE, BZERO or BLANK and float_length is None
+        ValueError: If invalidate_zeros is set for integer output
+        ValueError: If float_length is not None, 32 or 64
 
     Returns:
         tuple[fits.HDUList, u.Quantity]: The combined FITS cube and frequencies
     """
     # TODO: Check that all files have the same WCS
 
+    check_float_length(float_length)
     await check_matching_shapes_coro(file_list=file_list, max_workers=max_workers)
     await check_matching_axes_coro(file_list=file_list, max_workers=max_workers)
+    if float_length is None:
+        await check_matching_scaling_coro(file_list=file_list, max_workers=max_workers)
+        if invalidate_zeros and fits.getheader(file_list[0])["BITPIX"] > 0:
+            msg = (
+                "invalidate_zeros writes NaNs, which integer output data cannot "
+                "hold. Pass float_length=32 or 64."
+            )
+            raise ValueError(msg)
 
     file_specs, specs, missing_chan_idx = await parse_specs_coro(
         spec_file=spec_file,
@@ -1432,7 +1548,7 @@ def get_parser(
     parser.add_argument(
         "--floating",
         type=int,
-        choices=(8, 16, 32, 64),
+        choices=get_args(FLOAT_LENGTH),
         default=None,
         help="The number of floating point bits to use in the out cube. If None the input data precision is used.",
     )

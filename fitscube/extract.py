@@ -60,12 +60,12 @@ class TargetWCS:
     """The axis count that the frequency corresponds to"""
     ctype: str
     """The FITS WCS key name"""
-    crpix: int
-    """The reference index position"""
+    crpix: float
+    """The reference index position (FITS 1-based)"""
     crval: float
     """The reference value stored in the header"""
     cdelt: float
-    """The step between planes"""
+    """The step between planes, with any CDi_i or PCi_i applied"""
     cunit: str
     """the unit of the target axis"""
 
@@ -158,6 +158,21 @@ def get_output_path(input_path: Path, target_index: TargetIndex) -> Path:
     return output_path
 
 
+def check_output_is_not_input(fits_cube: Path, output_path: Path) -> None:
+    """Refuse to write a plane over the cube it is read from.
+
+    Args:
+        fits_cube (Path): The cube planes are read from
+        output_path (Path): Where a plane is to be written
+
+    Raises:
+        ValueError: If ``output_path`` is the cube
+    """
+    if output_path.exists() and output_path.samefile(fits_cube):
+        msg = f"Output path {output_path} is the input cube {fits_cube}"
+        raise ValueError(msg)
+
+
 def fits_file_contains_beam_table(header: fits.header.Header | Path) -> bool:
     """Consider whether a fits file contains a beam table
 
@@ -236,19 +251,60 @@ def find_target_axis(
     # Remember that range upper limit is exclusive, and
     # we start counting from 1
     for axis in range(1, naxis + 1):
-        if axis_name in header[f"CTYPE{axis}"]:
+        if axis_name in header.get(f"CTYPE{axis}", ""):
             logger.info(f"Found {axis_name} at {axis=}")
+            # CDi_i replaces CDELTi, PCi_i scales it. Absent keys take FITS defaults.
+            cdelt = header.get(
+                f"CD{axis}_{axis}",
+                header.get(f"CDELT{axis}", 1.0) * header.get(f"PC{axis}_{axis}", 1.0),
+            )
             return TargetWCS(
                 axis=axis,
                 ctype=header[f"CTYPE{axis}"],
-                crpix=header[f"CRPIX{axis}"],
-                crval=header[f"CRVAL{axis}"],
-                cdelt=header[f"CDELT{axis}"],
-                cunit=header[f"CUNIT{axis}"],
+                crpix=header.get(f"CRPIX{axis}", 0.0),
+                crval=header.get(f"CRVAL{axis}", 0.0),
+                cdelt=cdelt,
+                cunit=header.get(f"CUNIT{axis}", ""),
             )
 
     msg = "Did not find the frequency axis"
     raise TargetAxisMissingException(msg)
+
+
+def find_plane_axis(header: fits.header.Header) -> tuple[TargetWCS, str]:
+    """Find the FREQ or TIME axis to split a cube along.
+
+    Args:
+        header (fits.header.Header): The header from the fits cube
+
+    Raises:
+        TargetAxisMissingException: If there is neither a FREQ nor a TIME axis
+        ValueError: If both the FREQ and TIME axes are longer than one
+
+    Returns:
+        tuple[TargetWCS, str]: The axis, and its name (FREQ or TIME)
+    """
+    found: dict[str, TargetWCS] = {}
+    for axis_name in ("FREQ", "TIME"):
+        try:
+            found[axis_name] = find_target_axis(header=header, target_index=axis_name)
+        except TargetAxisMissingException:
+            continue
+    if not found:
+        msg = "Did not find a FREQ or TIME axis"
+        raise TargetAxisMissingException(msg)
+
+    # A time cube made from images keeps their degenerate FREQ axis
+    long_axes = [
+        axis_name
+        for axis_name, target_wcs in found.items()
+        if header[f"NAXIS{target_wcs.axis}"] > 1
+    ]
+    if len(long_axes) > 1:
+        msg = f"Both {long_axes} axes have more than one plane, so cannot pick one"
+        raise ValueError(msg)
+    axis_name = long_axes[0] if long_axes else next(iter(found))
+    return found[axis_name], axis_name
 
 
 def create_plane_target_wcs(
@@ -264,7 +320,10 @@ def create_plane_target_wcs(
         TargetWCS: The frequency information for a channel
     """
     index = target_index if isinstance(target_index, int) else target_index.axis_index
-    update_index = original_freq_wcs.crval + (index * original_freq_wcs.cdelt)
+    # FITS pixels are 1-based, so the 0-based index is pixel index + 1
+    update_index = original_freq_wcs.crval + (
+        (index + 1 - original_freq_wcs.crpix) * original_freq_wcs.cdelt
+    )
     return TargetWCS(
         axis=original_freq_wcs.axis,
         ctype=original_freq_wcs.ctype,
@@ -303,7 +362,13 @@ def update_header_for_target_axis(
     out_header[f"CRPIX{_idx}"] = plane_freq_wcs.crpix
     out_header[f"CRVAL{_idx}"] = plane_freq_wcs.crval
     out_header[f"CDELT{_idx}"] = plane_freq_wcs.cdelt
-    out_header[f"CUNIT{_idx}"] = plane_freq_wcs.cunit
+    # cdelt is the full step, so it goes into CDi_i, and PCi_i no longer scales it
+    if f"CD{_idx}_{_idx}" in out_header:
+        out_header[f"CD{_idx}_{_idx}"] = plane_freq_wcs.cdelt
+    if f"PC{_idx}_{_idx}" in out_header:
+        out_header[f"PC{_idx}_{_idx}"] = 1.0
+    if plane_freq_wcs.cunit:
+        out_header[f"CUNIT{_idx}"] = plane_freq_wcs.cunit
 
     if extract_beam_from_file and fits_file_contains_beam_table(
         header=extract_beam_from_file
@@ -354,6 +419,7 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
             target_index=target_index,
         )
     )
+    check_output_is_not_input(fits_cube=fits_cube, output_path=output_path)
 
     logger.info(f"Opening {fits_cube=}")
     with fits.open(
@@ -371,8 +437,8 @@ def extract_plane_from_cube(fits_cube: Path, extract_options: ExtractOptions) ->
     target_axis_wcs = find_target_axis(header=header, target_index=target_index)
     target_cube_index = len(data.shape) - target_axis_wcs.axis
 
-    if target_index.axis_index > data.shape[target_cube_index]:
-        msg = f"{extract_options.channel_index=} outside of channel cube {data.shape=}, axis shape of {data.shape[target_axis_wcs.axis - 1]}"
+    if not 0 <= target_index.axis_index < data.shape[target_cube_index]:
+        msg = f"{target_index.axis_index=} outside of {target_index.axis_name} axis of {data.shape=}, axis shape of {data.shape[target_cube_index]}"
         raise ChannelMissingException(msg)
 
     # Get the channel index requested
@@ -427,17 +493,17 @@ def read_beam_table(open_fits: fits.HDUList, hdu_index: int = 0) -> Beams | None
 def _plane_header(
     header: fits.header.Header,
     target_wcs: TargetWCS,
-    channel_index: int,
+    target_index: TargetIndex,
     beams: Beams | None,
 ) -> fits.header.Header:
-    """The header of a single extracted channel, beam included"""
+    """The header of a single extracted plane, beam included"""
     out_header = update_header_for_target_axis(
         header=header,
         target_wcs=target_wcs,
-        target_index=create_target_index(channel_index=channel_index),
+        target_index=target_index,
     )
     if beams is not None:
-        beam = beams[channel_index]
+        beam = beams[target_index.axis_index]
         out_header["BMAJ"] = beam.major.to(u.deg).value
         out_header["BMIN"] = beam.minor.to(u.deg).value
         out_header["BPA"] = beam.pa.to(u.deg).value
@@ -451,7 +517,7 @@ def _plane_header(
 async def extract_planes_from_cube_coro(
     fits_cube: Path, extract_planes_options: ExtractPlanesOptions | None = None
 ) -> list[Path]:
-    """Extract every channel of a cube into its own file.
+    """Extract every channel or timestep of a cube into its own file.
 
     Calling ``extract_plane_from_cube`` once per channel reopens the cube and
     re-reads its whole beam table each time, which grows with the square of the
@@ -463,6 +529,7 @@ async def extract_planes_from_cube_coro(
 
     Raises:
         ShapeMismatchException: If the supplied output paths do not match the channel count
+        ValueError: If both the FREQ and TIME axes are longer than one
 
     Returns:
         list[Path]: The output file of each channel, in channel order
@@ -475,19 +542,20 @@ async def extract_planes_from_cube_coro(
     ) as open_fits:
         header = open_fits[options.hdu_index].header
         data = open_fits[options.hdu_index].data
-        target_wcs = find_target_axis(header=header)
-        channels = count_cube_planes(header=header)
+        target_wcs, axis_name = find_plane_axis(header=header)
+        channels = int(header[f"NAXIS{target_wcs.axis}"])
+        index_key = "time_index" if axis_name == "TIME" else "channel_index"
+        target_indices = [
+            create_target_index(**{index_key: channel}) for channel in range(channels)
+        ]
         # The FITS axis order is reversed against the numpy one
         cube_axis = data.ndim - target_wcs.axis
         beams = read_beam_table(open_fits=open_fits, hdu_index=options.hdu_index)
 
         if options.output_paths is None:
             output_paths = [
-                get_output_path(
-                    input_path=fits_cube,
-                    target_index=create_target_index(channel_index=channel),
-                )
-                for channel in range(channels)
+                get_output_path(input_path=fits_cube, target_index=target_index)
+                for target_index in target_indices
             ]
         elif len(options.output_paths) != channels:
             msg = (
@@ -497,6 +565,8 @@ async def extract_planes_from_cube_coro(
             raise ShapeMismatchException(msg)
         else:
             output_paths = options.output_paths
+        for output_path in output_paths:
+            check_output_is_not_input(fits_cube=fits_cube, output_path=output_path)
 
         def _write_plane(channel: int) -> None:
             plane = np.expand_dims(
@@ -508,7 +578,7 @@ async def extract_planes_from_cube_coro(
                 header=_plane_header(
                     header=header,
                     target_wcs=target_wcs,
-                    channel_index=channel,
+                    target_index=target_indices[channel],
                     beams=beams,
                 ),
                 overwrite=options.overwrite,

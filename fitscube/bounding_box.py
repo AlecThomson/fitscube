@@ -163,6 +163,8 @@ async def get_bounding_box_for_fits_coro(
     data = np.squeeze(data)
 
     if invalidate_zeros:
+        # Integer data cannot hold NaN
+        data = data.astype(np.result_type(data.dtype, np.float32))
         data[data == 0.0] = np.nan
 
     return await asyncio.to_thread(create_bound_box_plane, image_data=data)
