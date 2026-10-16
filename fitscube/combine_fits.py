@@ -66,10 +66,6 @@ BIT_DICT = {
     8: 1,
 }
 FLOAT_LENGTH = Literal[32, 64]
-# Smallest grid step accepted, as a fraction of the smallest diff
-MAX_BLANKS_PER_GAP = 16
-# Most grid points built per input value
-MAX_GRID_PER_INPUT = 1000
 
 
 def fits_dtype(bit_pix: int) -> str:
@@ -401,7 +397,8 @@ def grid_step(diffs: ArrayLike) -> float:
         g = a
 
     divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
-    if g <= tol or not divides_all or g < min_diff / MAX_BLANKS_PER_GAP:
+    # A gcd far below every diff is float noise, not a real channel width.
+    if g <= tol or not divides_all or g * 16 < min_diff:
         return float(min_diff)
     return float(g)
 
@@ -434,7 +431,8 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     diffs = np.diff(specs_arr)
     step = grid_step(diffs)
     span = specs_arr[-1] - specs_arr[0]
-    if span / step > MAX_GRID_PER_INPUT * len(specs_arr):
+    max_channels = 1000 * len(specs_arr)
+    if span / step > max_channels:
         msg = (
             f"A regular grid of step {step} {specs.unit} over {len(specs_arr)} values "
             f"spanning {span} {specs.unit} would need {span / step + 1:.0f} channels. "
