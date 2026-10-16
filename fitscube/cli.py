@@ -6,8 +6,12 @@ from argparse import ArgumentParser
 
 from fitscube.combine_fits import cli as combine_cli
 from fitscube.combine_fits import get_parser as combine_get_parser
-from fitscube.compress import cli as decompress_cli
-from fitscube.compress import get_parser as decompress_get_parser
+from fitscube.compress import (
+    compress_cli,
+    decompress_cli,
+    get_compress_parser,
+    get_decompress_parser,
+)
 from fitscube.extract import cli as extract_cli
 from fitscube.extract import get_parser as extract_get_parser
 from fitscube.logging import logger
@@ -28,10 +32,15 @@ def get_parser() -> ArgumentParser:
     )
     extract_parser = extract_get_parser(parser=extract_parser)
 
+    compress_parser = subparser.add_parser(
+        "compress", help="Compress a cube to .fits.gz or .fits.fz"
+    )
+    compress_parser = get_compress_parser(parser=compress_parser)
+
     decompress_parser = subparser.add_parser(
         "decompress", help="Turn a .fits.gz or .fits.fz cube back into plain FITS"
     )
-    decompress_parser = decompress_get_parser(parser=decompress_parser)
+    decompress_parser = get_decompress_parser(parser=decompress_parser)
 
     return parser
 
@@ -45,6 +54,8 @@ def cli() -> None:
         combine_cli(args=args)
     elif args.mode == "extract":
         extract_cli(args=args)
+    elif args.mode == "compress":
+        compress_cli(args=args)
     elif args.mode == "decompress":
         decompress_cli(args=args)
     else:

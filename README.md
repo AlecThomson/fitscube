@@ -78,14 +78,15 @@ Command line:
 
 ```
 ❯ fitscube -h
-usage: fitscube [-h] {combine,extract,decompress} ...
+usage: fitscube [-h] {combine,extract,compress,decompress} ...
 
 Tooling to create fitscubes
 
 positional arguments:
-  {combine,extract,decompress}
+  {combine,extract,compress,decompress}
     combine             Combine FITS images together into a cube
     extract             Extract a plane from an existing cube
+    compress            Compress a cube to .fits.gz or .fits.fz
     decompress          Turn a .fits.gz or .fits.fz cube back into plain FITS
 
 options:
@@ -163,6 +164,30 @@ options:
 ```
 
 ```
+❯ fitscube compress -h
+usage: fitscube compress [-h] [--method {gzip,pgzip,tile-gzip,tile-rice}]
+                         [--quantize-level QUANTIZE_LEVEL] [--max-workers MAX_WORKERS]
+                         [--allow-requantize] [--remove] [-v]
+                         cube
+
+positional arguments:
+  cube                  An uncompressed FITS cube
+
+options:
+  -h, --help            show this help message and exit
+  --method {gzip,pgzip,tile-gzip,tile-rice}
+                        'gzip'/'pgzip' gzip the whole file to .fits.gz. 'tile-gzip' (lossless) and
+                        'tile-rice' (lossy) tile-compress to .fits.fz, as fpack does
+  --quantize-level QUANTIZE_LEVEL
+                        Quantization steps per noise sigma for 'tile-rice'
+  --max-workers MAX_WORKERS
+                        Compression threads
+  --allow-requantize    Let 'tile-rice' quantize a cube that was already quantized once
+  --remove              Delete the input once done
+  -v, --verbosity       Increase output verbosity
+```
+
+```
 ❯ fitscube decompress -h
 usage: fitscube decompress [-h] [-o OUTPUT] [--overwrite] [--remove] [-v] cube
 
@@ -193,9 +218,9 @@ frequencies = combine_fits(
 
 ## Compressed cubes
 
-`--compress` writes the cube in one of three ways:
+`fitscube compress`, or `combine --compress`, writes the cube in one of three ways:
 
-| `--compress-method` | Output | |
+| Method | Output | |
 |---|---|---|
 | `gzip`, `pgzip` | `.fits.gz` | The whole file gzipped. Lossless. |
 | `tile-gzip` | `.fits.fz` | [Tile compressed](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) with GZIP_2. Lossless. |
@@ -214,9 +239,10 @@ with fits.open("cube.fits.fz") as hdul:
 `.data` and `fits.getdata` decompress the whole cube into memory, for both `.fits.gz`
 and `.fits.fz`. A `.fits.gz` cube has no cheap way to read part of it.
 
-To get plain FITS back:
+To compress an existing cube, and to get plain FITS back:
 
 ```
+fitscube compress cube.fits --method tile-rice
 fitscube decompress cube.fits.fz
 ```
 

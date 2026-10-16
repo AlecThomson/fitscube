@@ -7,11 +7,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.cli import get_parser
+from fitscube.cli import cli
 from fitscube.combine_fits import combine_fits
 from fitscube.compress import (
     COMPRESS_METHOD,
-    cli,
     compress_cube,
     decompress_cube,
     tile_compress_cube,
@@ -199,14 +198,24 @@ def test_requantizing_a_lossy_cube_is_refused(tmp_path: Path) -> None:
     assert compress_cube(restored, method="tile-rice", allow_requantize=True).exists()
 
 
-def test_decompress_cli(tmp_path: Path) -> None:
-    """`fitscube decompress` should write the plain cube next to the compressed one"""
+def test_compress_and_decompress_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`fitscube compress` keeps its input unless asked; `decompress` restores the cube"""
     cube = tmp_path / "cube.fits"
     data = write_noise_cube(cube)
-    compressed = compress_cube(cube, method="tile-gzip")
 
-    cli(get_parser().parse_args(["decompress", str(compressed), "--remove"]))
+    monkeypatch.setattr("sys.argv", ["fitscube", "compress", str(cube)])
+    cli()
+    compressed = tmp_path / "cube.fits.fz"
+    assert cube.exists()
+    assert compressed.exists()
 
+    cube.unlink()
+    monkeypatch.setattr(
+        "sys.argv", ["fitscube", "decompress", str(compressed), "--remove"]
+    )
+    cli()
     assert not compressed.exists()
     np.testing.assert_array_equal(fits.getdata(cube), data)
 

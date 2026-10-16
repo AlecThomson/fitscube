@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, cast
+from typing import IO, Any, Literal, NamedTuple, cast, get_args
 
 import numpy as np
 from astropy.io import fits
@@ -52,11 +52,12 @@ def compress_cube(
     quantize_level: float = 4.0,
     tile_shape: tuple[int, int] | None = None,
     allow_requantize: bool = False,
+    remove: bool = True,
 ) -> Path:
-    """Compress a finished cube in place, streaming to avoid loading it into memory.
+    """Compress a finished cube, streaming to avoid loading it into memory.
 
     Args:
-        out_cube (Path): Path of the already-written, uncompressed cube. Deleted on success.
+        out_cube (Path): Path of the already-written, uncompressed cube.
         method (COMPRESS_METHOD): 'gzip' and 'pgzip' gzip the whole file to `.fits.gz`;
             'pgzip' needs the 'pgzip' extra. 'tile-gzip' (lossless) and 'tile-rice'
             (lossy) tile-compress to `.fits.fz`.
@@ -64,6 +65,7 @@ def compress_cube(
         quantize_level (float): Quantization steps per noise sigma for 'tile-rice'.
         tile_shape (tuple[int, int] | None): (y, x) tile size for the tile methods. Defaults to bands of 64 full-width rows.
         allow_requantize (bool): Let 'tile-rice' quantize a cube that was already quantized once.
+        remove (bool): Delete `out_cube` once the compressed cube is written.
 
     Returns:
         Path: Path of the compressed output.
@@ -76,6 +78,7 @@ def compress_cube(
             tile_shape=tile_shape,
             max_workers=max_workers,
             allow_requantize=allow_requantize,
+            remove=remove,
         )
 
     compressed_path = out_cube.with_suffix(out_cube.suffix + ".gz")
@@ -86,7 +89,8 @@ def compress_cube(
     with out_cube.open("rb") as src, opener(compressed_path, "wb") as dst:
         shutil.copyfileobj(src, dst)
 
-    out_cube.unlink()
+    if remove:
+        out_cube.unlink()
     return compressed_path
 
 
@@ -291,8 +295,9 @@ def tile_compress_cube(
     dither_seed: int | None = None,
     gzip_level: int = 6,
     allow_requantize: bool = False,
+    remove: bool = True,
 ) -> Path:
-    """Tile-compress a cube to `<name>.fits.fz`, as fpack does, then delete the original.
+    """Tile-compress a cube to `<name>.fits.fz`, as fpack does.
 
     Args:
         cube (Path): Uncompressed float cube, image in the primary HDU.
@@ -303,6 +308,7 @@ def tile_compress_cube(
         dither_seed (int | None): ZDITHER0 for quantized compression, 1 to 10000. Defaults to one derived from the data.
         gzip_level (int): zlib level for lossless GZIP_2, 1 (fastest, as fpack) to 9 (smallest).
         allow_requantize (bool): Allow quantizing a cube that `decompress_cube` marked as already quantized.
+        remove (bool): Delete `cube` once the compressed cube is written.
 
     Returns:
         Path: The compressed cube.
@@ -429,7 +435,8 @@ def tile_compress_cube(
             fits.append(partial_path, hdu.data, hdu.header)
 
     partial_path.replace(output)
-    cube.unlink()
+    if remove:
+        cube.unlink()
     return output
 
 
@@ -537,16 +544,63 @@ def untile_cube(cube: Path, output: Path) -> None:
                 fits.append(output, hdu.data, hdu.header)
 
 
-def get_parser(
+def get_compress_parser(
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.ArgumentParser:
+    """Command-line interface for compressing cubes."""
+    parser = parser or argparse.ArgumentParser(description="Compress a FITS cube")
+    parser.add_argument("cube", type=Path, help="An uncompressed FITS cube")
+    parser.add_argument(
+        "--method",
+        choices=get_args(COMPRESS_METHOD),
+        default="tile-gzip",
+        help="'gzip'/'pgzip' gzip the whole file to .fits.gz. 'tile-gzip' (lossless) "
+        "and 'tile-rice' (lossy) tile-compress to .fits.fz, as fpack does",
+    )
+    parser.add_argument(
+        "--quantize-level",
+        type=float,
+        default=4.0,
+        help="Quantization steps per noise sigma for 'tile-rice'",
+    )
+    parser.add_argument(
+        "--max-workers", type=int, default=None, help="Compression threads"
+    )
+    parser.add_argument(
+        "--allow-requantize",
+        action="store_true",
+        help="Let 'tile-rice' quantize a cube that was already quantized once",
+    )
+    parser.add_argument(
+        "--remove", action="store_true", help="Delete the input once done"
+    )
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
+    return parser
+
+
+def compress_cli(args: argparse.Namespace | None = None) -> None:
+    if args is None:
+        args = get_compress_parser().parse_args()
+    set_verbosity(verbosity=args.verbosity)
+    output = compress_cube(
+        args.cube,
+        method=args.method,
+        max_workers=args.max_workers,
+        quantize_level=args.quantize_level,
+        allow_requantize=args.allow_requantize,
+        remove=args.remove,
+    )
+    logger.info("Written %s", output)
+
+
+def get_decompress_parser(
     parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
     """Command-line interface for decompressing cubes."""
-    parser = (
-        parser
-        if parser
-        else argparse.ArgumentParser(
-            description="Decompress a .fits.gz or .fits.fz cube"
-        )
+    parser = parser or argparse.ArgumentParser(
+        description="Decompress a .fits.gz or .fits.fz cube"
     )
     parser.add_argument(
         "cube", type=Path, help="A .fits.gz or tile-compressed .fits.fz cube"
@@ -570,15 +624,11 @@ def get_parser(
     return parser
 
 
-def cli(args: argparse.Namespace | None = None) -> None:
+def decompress_cli(args: argparse.Namespace | None = None) -> None:
     if args is None:
-        args = get_parser().parse_args()
+        args = get_decompress_parser().parse_args()
     set_verbosity(verbosity=args.verbosity)
     output = decompress_cube(
         args.cube, output=args.output, overwrite=args.overwrite, remove=args.remove
     )
     logger.info("Written %s", output)
-
-
-if __name__ == "__main__":
-    cli()
