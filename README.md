@@ -191,195 +191,42 @@ frequencies = combine_fits(
 )
 ```
 
-## Working with compressed cubes
+## Compressed cubes
 
-`fitscube combine --compress` (or `fitscube.compress.compress_cube`) can write a
-cube in one of two compressed forms. They behave very differently when you come to
-read them.
+`--compress` writes the cube in one of three ways:
 
-| `--compress-method` | File | Lossless? | What it is |
-|---|---|---|---|
-| `gzip`, `pgzip` | `cube.fits.gz` | yes | The whole file gzipped. Any read decompresses the stream from its start. |
-| `tile-gzip` | `cube.fits.fz` | yes | FITS tile compression (GZIP_2), the format CFITSIO's `fpack` writes. Bit-exact. |
-| `tile-rice` | `cube.fits.fz` | **no** | FITS tile compression (RICE_1) after rounding each value to `--quantize-level` steps per noise sigma (default 4). |
-
-Tile-compressed cubes are split into tiles of 64 full-width rows of one plane, and
-each tile is compressed on its own, so reading a plane or a box only decompresses
-the tiles it touches. NaNs (blanked pixels) are kept exactly by every method,
-including `tile-rice`.
-
-What they buy, on a real 155 GB ASKAP Stokes I cube that is mostly blanked:
-
-| Method | Size | Ratio |
+| `--compress-method` | Output | |
 |---|---|---|
-| uncompressed | 155.4 GB | 1× |
-| `gzip -9` | 10.42 GB | 14.9× |
-| tile GZIP_2 (lossless) | 10.23 GB | 15.2× |
-| tile RICE, quantize level 4 | 4.62 GB | 33.6× (error 0.2–0.5% of the noise) |
+| `gzip`, `pgzip` | `.fits.gz` | The whole file gzipped. Lossless. |
+| `tile-gzip` | `.fits.fz` | [Tile compressed](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) with GZIP_2. Lossless. |
+| `tile-rice` | `.fits.fz` | Tile compressed with RICE_1, after quantising to `--quantize-level` steps per noise sigma. Lossy. |
 
-Lossless tile compression is about the size of gzip on noise-dominated cubes, and
-20–40% smaller on smooth ones (weights, backgrounds). Its gain is in reading, below.
-RICE is where the big disk saving is, at the cost of being lossy. On smooth,
-noiseless cubes such as weights RICE cannot quantize, and comes out *larger* than
-lossless; always use `tile-gzip` for those.
-
-### Which kind of file do I have?
-
-```python
-from astropy.io import fits
-
-fits.info("cube.fits.fz")
-# 0  PRIMARY           PrimaryHDU     ()           <- empty
-# 1  COMPRESSED_IMAGE  CompImageHDU   (x, y, chan) <- the cube
-# 2  BEAMS             BinTableHDU                <- per-channel beams, if any
-
-# Lossy files carry ZQUANTIZ in the raw compressed header
-raw = fits.getheader("cube.fits.fz", 1, disable_image_compression=True)
-print(raw.get("ZQUANTIZ"))  # e.g. 'SUBTRACTIVE_DITHER_2' for tile-rice, None for tile-gzip
-```
-
-A `.fits.gz` file looks like a normal FITS file to astropy (image in HDU 0), but
-see below for what reading it costs.
-
-### Do I need to decompress?
-
-| What you want to do | `.fits.gz` | `.fits.fz` |
-|---|---|---|
-| Read the header or WCS | no | no (use HDU 1) |
-| Look at a few channels in astropy | no, but each read is slow | no |
-| View in CARTA or DS9 | no, but CARTA unpacks the whole cube to RAM or temp disk first | no |
-| Spectra or boxes through all channels (e.g. RM synthesis) | **yes** | small boxes are fine (see below); for heavy use, **yes** |
-| Tools that memory-map the cube, or read the image from HDU 0 | **yes** | **yes** |
-| CASA, casacore or ASKAPsoft linmos | **yes** (cannot open it) | **yes** (cannot open it) |
-
-### How to decompress
-
-You need free disk for the whole uncompressed cube (e.g. 155 GB for the cube
-above). The compressed input is kept unless you ask for it to be removed.
-
-```sh
-fitscube decompress cube.fits.fz            # writes cube.fits; add --remove to delete the input
-fitscube decompress cube.fits.gz            # works for gzip too
-```
-
-```python
-from pathlib import Path
-from fitscube.compress import decompress_cube
-
-decompress_cube(Path("cube.fits.fz"))       # -> Path("cube.fits")
-```
-
-`fitscube decompress` streams a plane at a time, so it needs little memory, and it
-puts the image back in the primary HDU with the beam table after it. Other routes:
-
-- `.fits.gz`: `gunzip -k cube.fits.gz`, or `pigz -dk -p 8 cube.fits.gz` for speed.
-- `.fits.fz`: `funpack cube.fits.fz` from CFITSIO (`conda install -c conda-forge
-  cfitsio`, or `apt install libcfitsio-bin`). See the warning about `funpack` below.
-
-Do **not** decompress with `fits.writeto("cube.fits", fits.getdata("cube.fits.fz"))`:
-it loads the whole cube into memory.
-
-### Reading without decompressing
+`.fits.fz` files are what `fpack` writes, so DS9, CARTA, `funpack` and astropy can all
+read them. The image is in HDU 1, and `.section` only decompresses the tiles it needs:
 
 ```python
 from astropy.io import fits
 
 with fits.open("cube.fits.fz") as hdul:
-    cube = hdul[1]                          # the image is in HDU 1, not 0
-    header = cube.header                    # the image header (WCS etc.), as if uncompressed
-    plane = cube.section[10]                # one channel: only its tiles are decompressed
-    box = cube.section[:, 500:600, 500:600] # a box through all channels
-    beams = hdul["BEAMS"].data
+    plane = hdul[1].section[10]
 ```
 
-Use `.section`. `.data` (and `fits.getdata`) decompress the whole cube into memory,
-and `memmap=True` has no effect on compressed data. For a `.fits.gz` file `.section`
-stays small in memory but has to decompress the stream up to the plane you ask for,
-every time.
+`.data` and `fits.getdata` decompress the whole cube into memory, for both `.fits.gz`
+and `.fits.fz`. A `.fits.gz` cube has no cheap way to read part of it.
 
-Measured with astropy 8.0 on a 1.66 GB, 288-channel, 1200×1200 cube (astropy 6.0
-behaves the same):
+To get plain FITS back:
 
-| Read | `.fits.gz` | `.fits.fz` (`tile-gzip`) |
-|---|---|---|
-| `section[30]`, one channel | 10 s, 68 MB | 0.06 s, 70 MB |
-| `section[:, 500:600, 500:600]`, a 100×100 box through all channels | did not finish in 5 minutes | 2.7 s, 442 MB |
-| `data[30]` (reads everything) | 26 s, **3.3 GB** | 19 s, **2.3 GB** |
+```
+fitscube decompress cube.fits.fz
+```
 
-A box read decompresses every tile it touches in every channel, so its memory grows
-with the number of channels; very large spectral reads are better done on a
-decompressed copy.
+`funpack` works too, though `funpack` from CFITSIO 4.3.1 mis-decodes RICE files whose
+tiles are narrower than a row. fitscube always writes full-width tiles.
 
-### Sharp edges
-
-- **`.data`, `fits.getdata` and memory-mapping read the whole cube**, for both
-  formats. For `.fits.gz` the peak is about twice the uncompressed size.
-- **The image is in HDU 1** of a `.fits.fz` file. `hdul[0]`, `fits.getheader(path)`
-  and `fitscube extract` with the default `--hdu-index 0` see the empty primary. Use
-  `hdul[1]`, `fits.getheader(path, 1)` or `fitscube extract --hdu-index 1`.
-  (`fits.getdata(path)` finds the image by itself, but reads all of it.)
-- **Do not edit headers in place** (`fits.open(path, mode="update")`). It works, but
-  astropy decompresses and recompresses the whole file to do it: on a 415 MB cube
-  that took 54 s and 0.9 GB of memory for `.fz`, and 22 s and 0.9 GB for `.gz`. Fix
-  headers before compressing, or decompress first.
-- **`funpack` can silently corrupt RICE files with narrow tiles.** CFITSIO 4.3.1's
-  `funpack` (fpack 1.7.0) gets the values and NaNs wrong when a quantized tile is
-  narrower than a full row and the plane has blanks. CFITSIO's normal read path, as
-  used by CARTA and DS9, and astropy are fine. fitscube's own tiles are always full
-  width, so its files are safe; use `fitscube decompress` for `.fz` files from other
-  tools.
-- **CASA, casacore and linmos cannot open either format**; decompress first.
-- **CARTA (3.0 and later) opens both**, but for `.fits.gz` it decompresses the whole
-  cube into memory, or to the system temp directory when memory is short. That is
-  the full uncompressed size of RAM or disk on the CARTA server.
-- **Names and globs.** `*.fits` does not match `cube.fits.gz` or `cube.fits.fz`, and
-  `Path("cube.fits.fz").suffix` is `.fz`. Use `*.fits*`, or check
-  `path.name.endswith((".fits", ".fits.gz", ".fits.fz"))`.
-- **Disk.** Compressing deletes the uncompressed cube once the compressed one is
-  written. Decompressing needs room for the whole uncompressed cube.
-
-### Lossy compression, and compressing more than once
-
-`tile-rice` rounds every value to a grid with `--quantize-level` steps per noise
-sigma, with a random offset ("dithering") so the rounding error is unbiased and
-uncorrelated with the data. The noise is measured per tile, from differences
-between neighbouring pixels. At the default level of 4 the added error is at most
-about 7% of the noise (a step of sigma/4, divided by √12), which adds at most about
-0.3% to the total noise in quadrature. Radio images have noise correlated over the
-beam, which makes the neighbouring-pixel estimate low and the steps finer: on real
-ASKAP and simulated beam-convolved cubes the error was 0.2–1% of the noise. Higher
-levels keep more precision and compress less.
-
-The rules:
-
-- **Quantize once, as the final, archival step.** Keep a lossless copy if anything
-  might be reprocessed.
-- **Each decompress-and-recompress adds a fresh error.** Recompressing estimates
-  the noise again from data that was already rounded, and rounds it again on a
-  slightly different grid, so it is not a no-op: the error grows like the square root
-  of the number of cycles. Measured on a 415 MB beam-convolved noise cube at quantize
-  level 4 (the file size stays the same):
-
-  | Times compressed with `tile-rice` | 1 | 2 | 3 | 4 | 5 |
-  |---|---|---|---|---|---|
-  | Error, % of the noise | 1.20 | 1.70 | 2.09 | 2.42 | 2.71 |
-  | Error relative to one pass | 1 | 1.42 | 1.74 | 2.01 | 2.25 |
-
-- **Lossless after lossy is exact but wastes the saving.** `tile-gzip` of a
-  decompressed RICE cube stores the rounded values exactly, but is about the size of
-  ordinary lossless compression (147 MB against 43 MB for RICE on a 415 MB cube), not of the RICE file. Keep the
-  `.fz` file rather than decompressing and recompressing it.
-- **fitscube guards against quantizing twice.** `fitscube decompress` marks a cube it
-  decompressed from a lossy file with `FCLOSSY = T`, `FCQLEVEL` and a `HISTORY` card,
-  and `compress_cube(..., method="tile-rice")` refuses such a cube unless given
-  `allow_requantize=True`. `funpack` and other tools do not leave this mark, so once
-  a cube has been through them nothing in it records that it is lossy.
-- **Derived products inherit the error.** Products made from a lossy cube (RM
-  synthesis, moment maps, noise maps) carry the quantization error, and compressing
-  them lossily again adds more. Quote noise levels from the original cube.
-- **Not for checksums or regression tests.** A lossy file never reproduces the
-  original bits, and two runs with a different dither seed or tile shape differ from
-  each other.
+Quantise once. Every decompress and recompress with `tile-rice` adds a new error, so
+`fitscube decompress` marks lossy cubes with `FCLOSSY`, and `tile-rice` refuses them
+unless given `allow_requantize=True`. Smooth images such as weights do not shrink under
+RICE; use `tile-gzip` for them.
 
 ## Zero-sized beams
 

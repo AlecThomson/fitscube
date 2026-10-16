@@ -1,19 +1,4 @@
-"""Compress finished cubes, and turn compressed cubes back into plain FITS.
-
-Two families of compression are offered:
-
-- Whole-file gzip ('gzip', 'pgzip'): the cube becomes `<name>.fits.gz`. Readers
-  have to decompress the stream from its start, so reading any part of the data is
-  slow, and astropy's `.data` decompresses the whole cube into memory.
-- FITS tile compression ('tile-gzip', 'tile-rice'): the cube becomes
-  `<name>.fits.fz`, the format written by CFITSIO's `fpack`. Each tile (by default
-  64 full-width rows of one plane) is compressed on its own, so planes and boxes can
-  be read cheaply with `hdul[1].section[...]`. 'tile-gzip' (GZIP_2) is lossless. 'tile-rice' (RICE_1)
-  rounds floats to `quantize_level` steps per noise sigma, which is lossy.
-
-Tile compression streams one plane at a time across threads, so memory stays at a
-few planes however large the cube is.
-"""
+"""Compress cubes with gzip or FITS tile compression (as fpack does), and decompress them."""
 
 from __future__ import annotations
 
