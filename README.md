@@ -237,7 +237,9 @@ with fits.open("cube.fits.fz") as hdul:
 ```
 
 `.data` and `fits.getdata` decompress the whole cube into memory, for both `.fits.gz`
-and `.fits.fz`. A `.fits.gz` cube has no cheap way to read part of it.
+and `.fits.fz`. A `.fits.gz` cube has no cheap way to read part of it. CARTA (6.0) also
+reads the whole cube into memory when it opens either kind, so decompress large cubes
+before viewing them there.
 
 To compress an existing cube, and to get plain FITS back:
 
