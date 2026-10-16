@@ -15,14 +15,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import gzip
-import shutil
 import warnings
 from collections.abc import Callable
-from functools import partial
 from io import BufferedRandom
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, TypeVar, cast
+from typing import Any, Literal, NamedTuple, TypeVar, get_args
 
 import astropy.units as u
 import numpy as np
@@ -42,6 +39,7 @@ from fitscube.bounding_box import (
     BoundingBox,
     get_common_bounding_box_coro,
 )
+from fitscube.compress import COMPRESS_METHOD, compress_cube
 from fitscube.exceptions import (
     AxisMismatchException,
     AxisOrderException,
@@ -50,11 +48,6 @@ from fitscube.exceptions import (
     StokesMismatchException,
 )
 from fitscube.logging import TQDM_OUT, logger, set_verbosity
-
-try:
-    import pgzip
-except ImportError:
-    pgzip = None
 
 T = TypeVar("T")
 
@@ -1312,47 +1305,6 @@ async def combine_fits_coro(
 combine_fits = sync_wrapper(combine_fits_coro)
 
 
-COMPRESS_METHOD = Literal["gzip", "pgzip"]
-
-
-def compress_cube(
-    out_cube: Path,
-    method: COMPRESS_METHOD = "gzip",
-    max_workers: int | None = None,
-) -> Path:
-    """Gzip-compress a finished cube in place, streaming to avoid loading it into memory.
-
-    Args:
-        out_cube (Path): Path of the already-written, uncompressed cube. Deleted on success.
-        method (COMPRESS_METHOD): 'gzip' uses the stdlib and needs nothing extra.
-            'pgzip' parallelizes compression across `max_workers` threads but
-            requires the 'pgzip' extra.
-        max_workers (int | None): Thread count passed to `pgzip`; ignored for 'gzip'.
-
-    Returns:
-        Path: Path of the compressed output, `out_cube` with a '.gz' suffix appended.
-    """
-    compressed_path = out_cube.with_suffix(out_cube.suffix + ".gz")
-    msg = f"Compressing {out_cube} to {compressed_path} via {method}"
-    logger.info(msg)
-
-    if method == "pgzip":
-        if pgzip is None:
-            msg = (
-                "method='pgzip' requires the 'pgzip' extra: pip install fitscube[pgzip]"
-            )
-            raise ImportError(msg)
-        opener: Callable[..., IO[bytes]] = partial(pgzip.open, thread=max_workers)
-    else:
-        opener = cast("Callable[..., IO[bytes]]", gzip.open)
-
-    with out_cube.open("rb") as src, opener(compressed_path, "wb") as dst:
-        shutil.copyfileobj(src, dst)
-
-    out_cube.unlink()
-    return compressed_path
-
-
 def get_parser(
     parser: argparse.ArgumentParser | None = None,
 ) -> argparse.ArgumentParser:
@@ -1439,15 +1391,24 @@ def get_parser(
     parser.add_argument(
         "--compress",
         action="store_true",
-        help="Gzip-compress the output cube",
+        help="Compress the output cube once written",
     )
     parser.add_argument(
         "--compress-method",
-        choices=("gzip", "pgzip"),
+        choices=get_args(COMPRESS_METHOD),
         default="gzip",
-        help="Compression backend for --compress. 'gzip' is stdlib and needs nothing "
-        "extra. 'pgzip' parallelizes across --max-workers threads but requires the "
-        "'pgzip' extra: pip install fitscube[pgzip]",
+        help="How --compress compresses. 'gzip' and 'pgzip' gzip the whole file to "
+        ".fits.gz; 'pgzip' parallelizes across --max-workers threads but requires the "
+        "'pgzip' extra. 'tile-gzip' (lossless) and 'tile-rice' (lossy, see "
+        "--quantize-level) tile-compress to .fits.fz, as fpack does, so single planes "
+        "can be read without decompressing the whole cube",
+    )
+    parser.add_argument(
+        "--quantize-level",
+        type=float,
+        default=4.0,
+        help="Quantization steps per noise sigma for 'tile-rice'. Higher keeps more "
+        "precision and compresses less",
     )
 
     return parser
@@ -1497,7 +1458,10 @@ def cli(args: argparse.Namespace | None = None) -> None:
 
     if args.compress:
         out_cube = compress_cube(
-            out_cube, method=args.compress_method, max_workers=args.max_workers
+            out_cube,
+            method=args.compress_method,
+            max_workers=args.max_workers,
+            quantize_level=args.quantize_level,
         )
 
     spequency = "times" if time_domain_mode else "frequencies"
