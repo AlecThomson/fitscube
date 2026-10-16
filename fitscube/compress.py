@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, cast, get_args
+from typing import IO, Any, Literal, NamedTuple, TypeAlias, cast, get_args
 
 import numpy as np
 from astropy.io import fits
@@ -28,8 +28,8 @@ try:
 except ImportError:
     pgzip = None
 
-COMPRESS_METHOD = Literal["gzip", "pgzip", "tile-gzip", "tile-rice"]
-TILE_COMPRESSION_TYPE = Literal["GZIP_2", "RICE_1"]
+CompressMethod: TypeAlias = Literal["gzip", "pgzip", "tile-gzip", "tile-rice"]
+TileCompressionType: TypeAlias = Literal["GZIP_2", "RICE_1"]
 
 
 class CompressedPlane(NamedTuple):
@@ -47,7 +47,7 @@ class CompressedPlane(NamedTuple):
 
 def compress_cube(
     out_cube: Path,
-    method: COMPRESS_METHOD = "gzip",
+    method: CompressMethod = "gzip",
     max_workers: int | None = None,
     quantize_level: float = 4.0,
     tile_shape: tuple[int, int] | None = None,
@@ -58,7 +58,7 @@ def compress_cube(
 
     Args:
         out_cube (Path): Path of the already-written, uncompressed cube.
-        method (COMPRESS_METHOD): 'gzip' and 'pgzip' gzip the whole file to `.fits.gz`;
+        method (CompressMethod): 'gzip' and 'pgzip' gzip the whole file to `.fits.gz`;
             'pgzip' needs the 'pgzip' extra. 'tile-gzip' (lossless) and 'tile-rice'
             (lossy) tile-compress to `.fits.fz`.
         max_workers (int | None): Threads used by 'pgzip' and the tile methods; ignored for 'gzip'.
@@ -144,7 +144,7 @@ def gzip2_tiles(
 def astropy_compress_plane(
     plane: NDArray[Any],
     header: fits.Header,
-    compression_type: TILE_COMPRESSION_TYPE,
+    compression_type: TileCompressionType,
     quantize_level: float,
     tile_shape: tuple[int, ...],
     dither_seed: int,
@@ -190,7 +190,7 @@ def _without_gzip_mtime(data: bytes) -> bytes:
 
 def compress_plane(
     plane: NDArray[Any],
-    compression_type: TILE_COMPRESSION_TYPE,
+    compression_type: TileCompressionType,
     quantize_level: float,
     tile_shape: tuple[int, int],
     dither_seed: int,
@@ -255,7 +255,7 @@ def table_dtype(header: fits.Header, heap_columns: list[str]) -> np.dtype[Any]:
 
 def compressed_planes(
     image: fits.PrimaryHDU,
-    compression_type: TILE_COMPRESSION_TYPE,
+    compression_type: TileCompressionType,
     quantize_level: float,
     tile_shape: tuple[int, int],
     tiles_per_plane: int,
@@ -288,7 +288,7 @@ def compressed_planes(
 
 def tile_compress_cube(
     cube: Path,
-    compression_type: TILE_COMPRESSION_TYPE = "GZIP_2",
+    compression_type: TileCompressionType = "GZIP_2",
     quantize_level: float = 0.0,
     tile_shape: tuple[int, int] | None = None,
     max_workers: int | None = None,
@@ -301,7 +301,7 @@ def tile_compress_cube(
 
     Args:
         cube (Path): Uncompressed float cube, image in the primary HDU.
-        compression_type (TILE_COMPRESSION_TYPE): 'GZIP_2' (lossless when `quantize_level` is 0) or 'RICE_1'.
+        compression_type (TileCompressionType): 'GZIP_2' (lossless when `quantize_level` is 0) or 'RICE_1'.
         quantize_level (float): Quantization steps per noise sigma. 0 keeps floats exact (GZIP_2 only).
         tile_shape (tuple[int, int] | None): (y, x) tile size. Defaults to bands of 64 full-width rows.
         max_workers (int | None): Compression threads. Defaults to the number of CPUs.
@@ -367,7 +367,7 @@ def tile_compress_cube(
         )
         # The table header only depends on the settings, so one tile is enough
         leading_ones = (1,) * (len(cube_shape) - 2)
-        first_tile = image.section[(*((0,) * len(leading_ones)), slice(0, tile[0]))]
+        first_tile = image.section[(0,) * len(leading_ones) + (slice(0, tile[0]),)]
         _, template = astropy_compress_plane(
             first_tile.astype(first_tile.dtype.newbyteorder("="), copy=False).reshape(
                 leading_ones + first_tile.shape
@@ -552,7 +552,7 @@ def get_compress_parser(
     parser.add_argument("cube", type=Path, help="An uncompressed FITS cube")
     parser.add_argument(
         "--method",
-        choices=get_args(COMPRESS_METHOD),
+        choices=get_args(CompressMethod),
         default="tile-gzip",
         help="'gzip'/'pgzip' gzip the whole file to .fits.gz. 'tile-gzip' (lossless) "
         "and 'tile-rice' (lossy) tile-compress to .fits.fz, as fpack does",

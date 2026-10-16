@@ -10,7 +10,7 @@ from astropy.io import fits
 from fitscube.cli import cli
 from fitscube.combine_fits import combine_fits
 from fitscube.compress import (
-    COMPRESS_METHOD,
+    CompressMethod,
     compress_cube,
     decompress_cube,
     tile_compress_cube,
@@ -36,7 +36,7 @@ def write_noise_cube(path: Path, shape: tuple[int, ...] = (2, 5, 40, 48)) -> np.
 
 @pytest.mark.parametrize("method", ["gzip", "pgzip", "tile-gzip"])
 def test_compress_cube_roundtrip(
-    file_list_onebeam: list[Path], tmp_path: Path, method: COMPRESS_METHOD
+    file_list_onebeam: list[Path], tmp_path: Path, method: CompressMethod
 ) -> None:
     """Lossless compression should keep the data and beams, and remove the original"""
     output_file = tmp_path / "test.fits"
@@ -148,7 +148,7 @@ def test_tile_rice_needs_a_quantize_level(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("method", ["gzip", "tile-gzip"])
-def test_decompress_cube_roundtrip(tmp_path: Path, method: COMPRESS_METHOD) -> None:
+def test_decompress_cube_roundtrip(tmp_path: Path, method: CompressMethod) -> None:
     """Decompressing a losslessly compressed cube should give back the same file contents"""
     cube = tmp_path / "cube.fits"
     data = write_noise_cube(cube)

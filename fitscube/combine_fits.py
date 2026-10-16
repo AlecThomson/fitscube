@@ -39,7 +39,7 @@ from fitscube.bounding_box import (
     BoundingBox,
     get_common_bounding_box_coro,
 )
-from fitscube.compress import COMPRESS_METHOD, compress_cube
+from fitscube.compress import CompressMethod, compress_cube
 from fitscube.exceptions import (
     AxisMismatchException,
     AxisOrderException,
@@ -1395,7 +1395,7 @@ def get_parser(
     )
     parser.add_argument(
         "--compress-method",
-        choices=get_args(COMPRESS_METHOD),
+        choices=get_args(CompressMethod),
         default="gzip",
         help="How --compress compresses. 'gzip' and 'pgzip' gzip the whole file to "
         ".fits.gz; 'pgzip' parallelizes across --max-workers threads but requires the "
