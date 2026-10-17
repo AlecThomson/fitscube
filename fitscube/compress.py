@@ -41,8 +41,6 @@ class CompressedPlane(NamedTuple):
     """ZSCALE of each tile, empty unless quantized"""
     zeros: list[float]
     """ZZERO of each tile, empty unless quantized"""
-    has_blanks: bool
-    """Whether quantized tiles marked blank (NaN) pixels with ZBLANK"""
 
 
 def compress_cube(
@@ -176,7 +174,6 @@ def astropy_compress_plane(
             },
             scales=list(table.data["ZSCALE"]) if "ZSCALE" in names else [],
             zeros=list(table.data["ZZERO"]) if "ZZERO" in names else [],
-            has_blanks="ZBLANK" in table.header,
         )
         return compressed, table.header.copy()
 
@@ -203,7 +200,6 @@ def compress_plane(
             heap={"COMPRESSED_DATA": gzip2_tiles(plane, tile_shape, gzip_level)},
             scales=[],
             zeros=[],
-            has_blanks=False,
         )
     compressed, _ = astropy_compress_plane(
         plane, fits.Header(), compression_type, quantize_level, tile_shape, dither_seed
@@ -218,7 +214,6 @@ def table_header(
     heap_lengths: dict[str, int],
     heap_size: int,
     dither_seed: int,
-    has_blanks: bool,
 ) -> fits.Header:
     """Header of the whole cube's compressed table, built from the first plane's."""
     header = template.copy()
@@ -238,7 +233,9 @@ def table_header(
     header["NAXIS1"] = row_width
     if "ZDITHER0" in header:
         header["ZDITHER0"] = dither_seed
-    if has_blanks:
+    if "ZQUANTIZ" in header:
+        # Always set, so the header never grows past the placeholder written before
+        # the tiles that turn out to hold blanks
         header["ZBLANK"] = np.iinfo(np.int32).min
     return header
 
@@ -389,19 +386,16 @@ def tile_compress_cube(
             # Placeholders: the header and table are rewritten once the heap is known,
             # and stay the same size because only fixed-width card values change
             handle.write(
-                table_header(
-                    template, cube_shape, nrows, heap_lengths, 0, dither_seed, False
-                )
+                table_header(template, cube_shape, nrows, heap_lengths, 0, dither_seed)
                 .tostring()
                 .encode()
             )
             handle.write(table.tobytes())
+            table_end = handle.tell()
 
             heap_size = 0
-            has_blanks = False
             row = 0
             for plane in itertools.chain([first], planes):
-                has_blanks |= plane.has_blanks
                 for tile_index in range(tiles_per_plane):
                     for name in heap_lengths:
                         data = plane.heap[name][tile_index]
@@ -424,12 +418,14 @@ def tile_compress_cube(
                     heap_lengths,
                     heap_size,
                     dither_seed,
-                    has_blanks,
                 )
                 .tostring()
                 .encode()
             )
             handle.write(table.tobytes())
+            if handle.tell() != table_end:
+                msg = "The final table header differs in size from its placeholder"
+                raise RuntimeError(msg)
 
         for hdu in hdul[1:]:
             fits.append(partial_path, hdu.data, hdu.header)

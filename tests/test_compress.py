@@ -232,3 +232,22 @@ def test_requantizing_dithers_afresh(tmp_path: Path) -> None:
     )
 
     assert fits.getheader(second, 1, disable_image_compression=True)["ZDITHER0"] != seed
+
+
+@pytest.mark.parametrize("extra_cards", range(36))
+def test_tile_rice_header_never_grows(tmp_path: Path, extra_cards: int) -> None:
+    """Blanks only past the first tile must not grow the header over its placeholder"""
+    rng = np.random.default_rng(1)
+    data = rng.normal(0, 1e-3, (3, 40, 48)).astype(np.float32)
+    data[-1, -8:] = np.nan
+    header = fits.Header()
+    for i in range(extra_cards):
+        header.add_comment(f"padding {i}")
+    fits.PrimaryHDU(data, header).writeto(tmp_path / "cube.fits")
+
+    compressed = compress_cube(tmp_path / "cube.fits", method="tile-rice")
+
+    got = fits.getdata(compressed, 1)
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(data))
+    finite = np.isfinite(data)
+    assert np.std(got[finite] - data[finite]) < 1e-3 / 4 / np.sqrt(12) * 1.2
