@@ -86,6 +86,12 @@ def test_get_output_path() -> None:
         input_path=in_fits, target_index=target_index
     )
 
+    target_index = create_target_index(channel_index=10)
+    for compressed in ("some.example.cube.fits.gz", "some.example.cube.fits.fz"):
+        assert Path("some.example.cube.channel-10.fits") == get_output_path(
+            input_path=Path(compressed), target_index=target_index
+        )
+
 
 def test_header(example_header) -> None:
     """Puliing together the header"""

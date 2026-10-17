@@ -149,6 +149,10 @@ def get_output_path(input_path: Path, target_index: TargetIndex) -> Path:
     """
     index_suffix = f"{target_index.output_name.lower()}-{target_index.axis_index}"
 
+    # Planes are written uncompressed, so name them as plain FITS
+    if input_path.suffix in (".gz", ".fz"):
+        input_path = input_path.with_suffix("")
+
     # The input_path suffix returns a string with a period
     channel_suffix = f".{index_suffix}{input_path.suffix}"
     output_path = input_path.with_suffix(channel_suffix)

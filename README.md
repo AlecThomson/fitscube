@@ -78,17 +78,19 @@ Command line:
 
 ```
 ❯ fitscube -h
-usage: fitscube [-h] {combine,extract} ...
+usage: fitscube [-h] {combine,extract,compress,decompress} ...
 
 Tooling to create fitscubes
 
 positional arguments:
-  {combine,extract}
-    combine          Combine FITS images together into a cube
-    extract          Extract a plane from an existing cube
+  {combine,extract,compress,decompress}
+    combine             Combine FITS images together into a cube
+    extract             Extract a plane from an existing cube
+    compress            Compress a cube to .fits.gz or .fits.fz
+    decompress          Turn a .fits.gz or .fits.fz cube back into plain FITS
 
 options:
-  -h, --help         show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ```
@@ -97,7 +99,8 @@ usage: fitscube combine [-h] [-o] [--create-blanks] [--time-domain]
                         [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v]
                         [--max-workers MAX_WORKERS] [--bounding-box] [--invalidate-zeros]
                         [--no-blank-zero-beams] [--floating {32,64}] [--compress]
-                        [--compress-method {gzip,pgzip}]
+                        [--compress-method {gzip,pgzip,tile-gzip,tile-rice}]
+                        [--quantize-level QUANTIZE_LEVEL]
                         file_list [file_list ...] out_cube
 
 positional arguments:
@@ -129,11 +132,16 @@ options:
   --floating {32,64}
                         The number of floating point bits to use in the out cube. If None the
                         input data precision is used.
-  --compress            Gzip-compress the output cube
-  --compress-method {gzip,pgzip}
-                        Compression backend for --compress. 'gzip' is stdlib and needs nothing
-                        extra. 'pgzip' parallelizes across --max-workers threads but requires the
-                        'pgzip' extra: pip install fitscube[pgzip]
+  --compress            Compress the output cube once written
+  --compress-method {gzip,pgzip,tile-gzip,tile-rice}
+                        How --compress compresses. 'gzip' and 'pgzip' gzip the whole file to
+                        .fits.gz; 'pgzip' parallelizes across --max-workers threads but requires
+                        the 'pgzip' extra. 'tile-gzip' (lossless) and 'tile-rice' (lossy, see
+                        --quantize-level) tile-compress to .fits.fz, as fpack does, so single
+                        planes can be read without decompressing the whole cube
+  --quantize-level QUANTIZE_LEVEL
+                        Quantization steps per noise sigma for 'tile-rice'. Higher keeps more
+                        precision and compresses less
 ```
 
 ```
@@ -155,6 +163,45 @@ options:
                         The name of the new output file. If not specified it is generated from the fits cube name
 ```
 
+```
+❯ fitscube compress -h
+usage: fitscube compress [-h] [--method {gzip,pgzip,tile-gzip,tile-rice}]
+                         [--quantize-level QUANTIZE_LEVEL] [--max-workers MAX_WORKERS]
+                         [--allow-requantize] [--remove] [-v]
+                         cube
+
+positional arguments:
+  cube                  An uncompressed FITS cube
+
+options:
+  -h, --help            show this help message and exit
+  --method {gzip,pgzip,tile-gzip,tile-rice}
+                        'gzip'/'pgzip' gzip the whole file to .fits.gz. 'tile-gzip' (lossless) and
+                        'tile-rice' (lossy) tile-compress to .fits.fz, as fpack does
+  --quantize-level QUANTIZE_LEVEL
+                        Quantization steps per noise sigma for 'tile-rice'
+  --max-workers MAX_WORKERS
+                        Compression threads
+  --allow-requantize    Let 'tile-rice' quantize a cube that was already quantized once
+  --remove              Delete the input once done
+  -v, --verbosity       Increase output verbosity
+```
+
+```
+❯ fitscube decompress -h
+usage: fitscube decompress [-h] [-o OUTPUT] [--overwrite] [--remove] [-v] cube
+
+positional arguments:
+  cube                 A .fits.gz or tile-compressed .fits.fz cube
+
+options:
+  -h, --help           show this help message and exit
+  -o, --output OUTPUT  Output path. Defaults to the input without .gz/.fz
+  --overwrite          Replace the output if it exists
+  --remove             Delete the compressed input once done
+  -v, --verbosity      Increase output verbosity
+```
+
 Python:
 
 ```python
@@ -168,6 +215,46 @@ frequencies = combine_fits(
     file_list
 )
 ```
+
+## Compressed cubes
+
+`fitscube compress`, or `combine --compress`, writes the cube in one of three ways:
+
+| Method | Output | |
+|---|---|---|
+| `gzip`, `pgzip` | `.fits.gz` | The whole file gzipped. Lossless. |
+| `tile-gzip` | `.fits.fz` | [Tile compressed](https://heasarc.gsfc.nasa.gov/fitsio/fpack/) with GZIP_2. Lossless. |
+| `tile-rice` | `.fits.fz` | Tile compressed with RICE_1, after quantising to `--quantize-level` steps per noise sigma. Lossy. |
+
+`.fits.fz` files are what `fpack` writes, so DS9, CARTA, `funpack` and astropy can all
+read them. The image is in HDU 1, and `.section` only decompresses the tiles it needs:
+
+```python
+from astropy.io import fits
+
+with fits.open("cube.fits.fz") as hdul:
+    plane = hdul[1].section[10]
+```
+
+`.data` and `fits.getdata` decompress the whole cube into memory, for both `.fits.gz`
+and `.fits.fz`. A `.fits.gz` cube has no cheap way to read part of it. CARTA (6.0) also
+reads the whole cube into memory when it opens either kind, so decompress large cubes
+before viewing them there.
+
+To compress an existing cube, and to get plain FITS back:
+
+```
+fitscube compress cube.fits --method tile-rice
+fitscube decompress cube.fits.fz
+```
+
+`funpack` works too, though `funpack` from CFITSIO 4.3.1 mis-decodes RICE files whose
+tiles are narrower than a row. fitscube always writes full-width tiles.
+
+Quantise once. Every decompress and recompress with `tile-rice` adds a new error, so
+`fitscube decompress` marks lossy cubes with `FCLOSSY`, and `tile-rice` refuses them
+unless given `allow_requantize=True`. Smooth images such as weights do not shrink under
+RICE; use `tile-gzip` for them.
 
 ## Zero-sized beams
 
