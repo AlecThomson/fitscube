@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from astropy.io import fits
+from fitscube import compress as compress_module
 from fitscube.cli import cli
 from fitscube.combine_fits import combine_fits
 from fitscube.compress import (
@@ -251,3 +254,25 @@ def test_tile_rice_header_never_grows(tmp_path: Path, extra_cards: int) -> None:
     np.testing.assert_array_equal(np.isnan(got), np.isnan(data))
     finite = np.isfinite(data)
     assert np.std(got[finite] - data[finite]) < 1e-3 / 4 / np.sqrt(12) * 1.2
+
+
+def test_tile_compress_refuses_a_grown_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A final header longer than its placeholder errors rather than corrupting the file"""
+    write_noise_cube(tmp_path / "cube.fits")
+    original = compress_module.table_header
+
+    def grown(*args: Any, **kwargs: Any) -> fits.Header:
+        header = original(*args, **kwargs)
+        for i in range(36):
+            header.add_comment(f"padding {i}")
+        return header
+
+    calls: Iterator[Callable[..., fits.Header]] = iter([original, grown])
+    monkeypatch.setattr(
+        compress_module, "table_header", lambda *a, **k: next(calls)(*a, **k)
+    )
+    with pytest.raises(RuntimeError, match="placeholder"):
+        tile_compress_cube(tmp_path / "cube.fits", remove=False)
+    assert not (tmp_path / "cube.fits.fz").exists()
