@@ -256,6 +256,19 @@ Quantise once. Every decompress and recompress with `tile-rice` adds a new error
 unless given `allow_requantize=True`. Smooth images such as weights do not shrink under
 RICE; use `tile-gzip` for them.
 
+## Blank channels
+
+`--create-blanks` puts the inputs on one evenly spaced axis, with NaN planes
+where there is no input. It picks the widest step that holds every input, so
+images of uneven width, or images either side of a gap between bands (as in
+RACS-low3, -mid and -high together), still make a single cube.
+
+An input counts as on the grid if it is within ~1 Hz at 1 GHz of a plane (or
+~0.5 s for times). If any input is off by more than float rounding, `fitscube`
+logs a warning, and the cube's `CSYERi` (the FITS systematic error of the axis)
+records the largest offset. A grid of more than 1000 planes per input, or one
+that cannot hold every input, is refused.
+
 ## Zero-sized beams
 
 wsclean writes `BMAJ = BMIN = 0` into an image when no PSF was fitted for that

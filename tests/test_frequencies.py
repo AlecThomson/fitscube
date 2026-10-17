@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.combine_fits import combine_fits, even_spacing, grid_step, parse_specs
+from fitscube.combine_fits import combine_fits, even_spacing, parse_specs
 from fitscube.exceptions import IrregularSpacingException
 
 
@@ -124,17 +125,27 @@ def test_even_spacing_non_adjacent_gaps():
     assert np.array_equal(missing_chan_idx, expected_missing)
 
 
-def test_float_gcd_does_not_explode_the_grid():
-    # The float gcd of 1e6 and 1e6 + 2 Hz is 2 Hz, a grid of a million channels
-    assert grid_step([1e6, 1e6 + 2]) == 1e6
-    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
-        even_spacing(np.array([0.0, 1e6, 2e6 + 2]) * u.Hz)
-    # Missing channels 1, 2 and 4 still give the unit step
-    assert grid_step([3.0, 2.0]) == 1.0
+def test_offsets_within_tolerance_keep_the_coarse_grid(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # 2 Hz off a 1 MHz grid at 1 GHz is within tolerance, not a 2 Hz grid
+    with caplog.at_level(logging.WARNING, logger="fitscube"):
+        new_specs, missing_chan_idx = even_spacing(
+            (1e9 + np.array([0.0, 1e6, 2e6 + 2])) * u.Hz
+        )
+    assert len(new_specs) == 3
+    assert not missing_chan_idx.any()
+    assert "not exactly on a regular grid" in caplog.text
+
+
+def test_exact_grids_do_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="fitscube"):
+        even_spacing((1e9 + np.array([0.0, 3.0, 5.0]) * 1e6) * u.Hz)
+    assert "not exactly" not in caplog.text
 
 
 def test_huge_grids_are_refused():
-    with pytest.raises(IrregularSpacingException, match="would need"):
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
         # A unit step over a 1e6 span would be a million mostly blank channels
         even_spacing(np.array([0.0, 1.0, 2.0, 1e6]) * u.Hz)
 

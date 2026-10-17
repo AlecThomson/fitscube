@@ -579,3 +579,33 @@ def test_float_length_must_be_fits_float(
         get_parser().parse_args(
             [*map(str, file_list), str(out_cube), "--floating", str(float_length)]
         )
+
+
+@pytest.mark.parametrize("jitter", [0.0, 0.3])
+def test_grid_offset_is_recorded(tmp_path: Path, jitter: float) -> None:
+    """CSYERi holds how far an input sits from the plane it was written to."""
+    freqs = (1e9 + np.array([0.0, 1.0, 3.0]) * 1e6 + [0.0, jitter, 0.0]) * u.Hz
+    file_list = [
+        make_plane(tmp_path / f"offset_{i}.fits", freq, value=float(i))
+        for i, freq in enumerate(freqs)
+    ]
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(
+        file_list=file_list, out_cube=out_cube, create_blanks=True, overwrite=True
+    )
+
+    header = fits.getheader(out_cube)
+    assert header["CTYPE4"] == "FREQ"
+    # The grid is fitted to all inputs, so the offset is shared out among them
+    assert header["CSYER4"] <= jitter
+    assert (header["CSYER4"] > 0.1) == (jitter > 0)
+    assert "CSYER4" in str(header["HISTORY"])
+
+
+def test_no_grid_offset_without_blanks(tmp_path: Path, specs: u.Quantity) -> None:
+    file_list = [
+        make_plane(tmp_path / f"plain_{i}.fits", spec) for i, spec in enumerate(specs)
+    ]
+    out_cube = tmp_path / "cube.fits"
+    combine_fits(file_list=file_list, out_cube=out_cube, overwrite=True)
+    assert "CSYER4" not in fits.getheader(out_cube)
