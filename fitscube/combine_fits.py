@@ -644,10 +644,7 @@ async def create_output_cube_coro(
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
     elif spec_error is not None:
-        new_header[f"CSYER{fits_idx}"] = (
-            spec_error,
-            f"[{unit:fits}] Largest input offset from its plane",
-        )
+        new_header[f"CSYER{fits_idx}"] = spec_error
         new_header["HISTORY"] = (
             f"fitscube placed the inputs on a regular {ctype} grid. Each is within "
             f"CSYER{fits_idx} of its plane."
