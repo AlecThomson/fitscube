@@ -98,7 +98,7 @@ options:
 usage: fitscube combine [-h] [-o] [--create-blanks] [--time-domain]
                         [--spec-file SPEC_FILE | --specs SPECS [SPECS ...] | --ignore-spec] [-v]
                         [--max-workers MAX_WORKERS] [--bounding-box] [--invalidate-zeros]
-                        [--no-blank-zero-beams] [--floating {8,16,32,64}] [--compress]
+                        [--no-blank-zero-beams] [--floating {32,64}] [--compress]
                         [--compress-method {gzip,pgzip,tile-gzip,tile-rice}]
                         [--quantize-level QUANTIZE_LEVEL]
                         file_list [file_list ...] out_cube
@@ -129,7 +129,7 @@ options:
                         Keep images whose restoring beam is exactly zero. By default such images
                         are blanked with NaNs, as a zero beam means no PSF was fitted for that
                         plane (e.g. a wsclean model image planted by -fit-spectral-pol)
-  --floating {8,16,32,64}
+  --floating {32,64}
                         The number of floating point bits to use in the out cube. If None the
                         input data precision is used.
   --compress            Compress the output cube once written

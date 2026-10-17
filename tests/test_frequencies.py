@@ -6,7 +6,8 @@ import astropy.units as u
 import numpy as np
 import pytest
 from astropy.io import fits
-from fitscube.combine_fits import combine_fits, even_spacing, parse_specs
+from fitscube.combine_fits import combine_fits, even_spacing, grid_step, parse_specs
+from fitscube.exceptions import IrregularSpacingException
 
 
 @pytest.fixture
@@ -121,3 +122,27 @@ def test_even_spacing_non_adjacent_gaps():
     assert missing_chan_idx.sum() == 3
     expected_missing = np.array([False, True, True, False, True, False])
     assert np.array_equal(missing_chan_idx, expected_missing)
+
+
+def test_float_gcd_does_not_explode_the_grid():
+    # The float gcd of 1e6 and 1e6 + 2 Hz is 2 Hz, a grid of a million channels
+    assert grid_step([1e6, 1e6 + 2]) == 1e6
+    with pytest.raises(IrregularSpacingException, match="would drop inputs"):
+        even_spacing(np.array([0.0, 1e6, 2e6 + 2]) * u.Hz)
+    # Missing channels 1, 2 and 4 still give the unit step
+    assert grid_step([3.0, 2.0]) == 1.0
+
+
+def test_huge_grids_are_refused():
+    with pytest.raises(IrregularSpacingException, match="would need"):
+        # A unit step over a 1e6 span would be a million mostly blank channels
+        even_spacing(np.array([0.0, 1.0, 2.0, 1e6]) * u.Hz)
+
+
+def test_even_spacing_narrow_channels():
+    # 1.16 kHz zoom channels at 1.4 GHz, one missing. A 10 kHz match tolerance
+    # would put every input on several grid points.
+    specs = (1.4e9 + np.delete(np.arange(64), 10) * 1157.4) * u.Hz
+    new_specs, missing_chan_idx = even_spacing(specs)
+    assert len(new_specs) == 64
+    assert np.flatnonzero(missing_chan_idx).tolist() == [10]
