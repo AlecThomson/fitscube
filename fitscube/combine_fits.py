@@ -29,7 +29,7 @@ from astropy.io.fits.verify import VerifyWarning
 from astropy.table import Table
 from astropy.time import Time
 from astropy.wcs import WCS, WCSSUB_STOKES
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import NDArray
 from radio_beam import Beam, Beams
 from radio_beam.beam import NoBeamException
 from tqdm.asyncio import tqdm
@@ -324,130 +324,120 @@ async def check_matching_scaling_coro(
 check_matching_scaling = sync_wrapper(check_matching_scaling_coro)
 
 
-# https://stackoverflow.com/a/66082278
-def np_arange_fix(start: float, stop: float, step: float) -> NDArray[np.float64]:
-    n = (stop - start) / step + 1
-    x = n - int(n)
-    stop += step * max(0.1, x) if x < 0.5 else 0
-    return np.arange(start, stop, step)
-
-
-def isin_close(
-    element: NDArray[np.floating[Any]],
-    test_element: ArrayLike,
-    time_domain_mode: bool = False,
-) -> NDArray[np.bool_]:
-    """Check if element is in test_element, within a tolerance.
-
-    Args:
-        element (NDArray[np.floating[Any]]): Element to check
-        test_element (ArrayLike): Element to check against
-
-    Returns:
-        NDArray[np.bool_]: Boolean array
-    """
+def match_tolerance(
+    values: NDArray[np.floating[Any]], time_domain_mode: bool = False
+) -> NDArray[np.floating[Any]]:
+    """How far a value may sit from a grid point and still be on it."""
     if time_domain_mode:
         # ~0.5 s for MJD seconds, so integrations of a second or more are told apart
-        rtol = 1e-10
-        atol = 1e-9
+        rtol, atol = 1e-10, 1e-9
     else:
         # ~1 Hz at 1 GHz. The np.isclose default of rtol=1e-5 (10 kHz) would
         # match several kHz-wide zoom channels and snap off-grid inputs.
-        rtol = 1e-9
-        atol = 1e-5
-    return np.isclose(element[:, None], test_element, rtol=rtol, atol=atol).any(1)
+        rtol, atol = 1e-9, 1e-5
+    return atol + rtol * np.abs(values)
 
 
-def grid_step(diffs: ArrayLike) -> float:
-    """Recover the fundamental channel step from the observed diffs.
+class GridFit(NamedTuple):
+    """A regular grid through a set of sorted values."""
 
-    On a regular grid with missing channels every diff is an integer multiple
-    of the channel width, so the gcd of the diffs recovers that width even when
-    no two surviving channels are adjacent -- the case where ``min(diffs)``
-    overestimates the step (e.g. present channels 0, 3, 5 give ``min == 2`` but
-    the true step is 1). Falls back to ``min(diffs)`` if the gcd is numerically
-    unstable or does not divide every diff, so the common case is unchanged (any
-    surviving adjacent pair makes the gcd equal the minimum diff exactly). Also
-    falls back when the gcd is implausibly small: diffs of 1e6 and 1e6 + 2 have a
-    float gcd of 2.
+    start: float
+    """Value of the first grid point"""
+    step: float
+    """Grid step"""
+    index: NDArray[np.int64]
+    """Grid point of each value"""
+    residuals: NDArray[np.float64]
+    """Distance of each value from its grid point"""
+
+
+def fit_grid(
+    specs: NDArray[np.floating[Any]], time_domain_mode: bool = False
+) -> GridFit | None:
+    """Find the widest regular grid that holds every sorted value.
+
+    The step divides the smallest gap, so steps of that gap over 1, 2, 3...
+    are tried in turn. Each is fitted to all the values, and the first that
+    puts every value on a grid point within the match tolerance wins.
 
     Args:
-        diffs (ArrayLike): Differences between consecutive spec values.
+        specs (NDArray[np.floating[Any]]): Sorted, distinct values
+        time_domain_mode (bool, optional): Use the tolerance for times. Defaults to False.
 
     Returns:
-        float: Estimated regular grid step.
+        GridFit | None: The grid, or None if none of at most 1000 points per value fits
     """
-    diffs = np.abs(np.asarray(diffs, dtype=np.longdouble))
-    min_diff = np.min(diffs)
-    tol = np.max(diffs) * 1e-6
+    offsets = specs - specs[0]
+    span = offsets[-1]
+    min_gap = np.min(np.diff(specs))
+    tol = match_tolerance(specs, time_domain_mode)
+    max_channels = 1000 * len(specs)
 
-    g = diffs[0]
-    for d in diffs[1:]:
-        a, b = (g, d) if g >= d else (d, g)
-        # Tolerant Euclid: stop once the remainder is within the noise floor.
-        while b > tol:
-            a, b = b, a % b
-        g = a
+    divisor = 1
+    while span * divisor / min_gap < max_channels:
+        index = np.round(offsets * divisor / min_gap)
+        step, start = np.polyfit(index, offsets, 1)
+        residuals = np.abs(offsets - start - index * step)
+        if np.all(residuals <= tol):
+            return GridFit(
+                start=float(specs[0] + start),
+                step=float(step),
+                index=index.astype(np.int64),
+                residuals=residuals,
+            )
+        divisor += 1
 
-    divides_all = np.all(np.abs(np.round(diffs / g) - diffs / g) <= 1e-3)
-    # A gcd far below every diff is float noise, not a real channel width.
-    if g <= tol or not divides_all or g * 16 < min_diff:
-        return float(min_diff)
-    return float(g)
+    return None
 
 
 def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> SpequencyInfo:
     """Make the frequencies or times evenly spaced.
 
-    A regular grid cannot always hold every input - an irregular spacing whose
-    step cannot be recovered leaves inputs sitting between grid points, and equal
-    values collapse onto one. Those inputs would be dropped from the cube without
-    trace, so this raises rather than writing a cube that is missing data.
+    A regular grid cannot always hold every input - an irregular spacing leaves
+    inputs sitting between grid points, and equal values collapse onto one.
+    Those inputs would be dropped from the cube without trace, so this raises
+    rather than writing a cube that is missing data. Inputs that sit on the grid
+    only within the match tolerance are kept, with a warning.
 
     Args:
         specs (u.Quantity): Original frequencies/times
 
     Raises:
-        IrregularSpacingException: If a grid through the inputs would drop any of them, or is implausibly large
+        IrregularSpacingException: If no grid of at most 1000 points per input holds every input
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
     """
-    # The grid is built from the first and last value, so an unsorted input would
-    # otherwise give an empty (or reversed) grid. Callers sort later, not here.
-    specs_arr = np.sort(specs.value.astype(np.longdouble))
+    specs_arr = np.sort(specs.value.astype(np.float64))
     if len(specs_arr) < 2:
         return SpequencyInfo(
             specs_arr * specs.unit, np.zeros(len(specs_arr)).astype(bool)
         )
 
-    diffs = np.diff(specs_arr)
-    step = grid_step(diffs)
-    span = specs_arr[-1] - specs_arr[0]
-    max_channels = 1000 * len(specs_arr)
-    if span / step > max_channels:
+    spequencies = "times" if time_domain_mode else "frequencies"
+    grid = fit_grid(specs_arr, time_domain_mode) if np.all(np.diff(specs_arr)) else None
+    if grid is None:
         msg = (
-            f"A regular grid of step {step} {specs.unit} over {len(specs_arr)} values "
-            f"spanning {span} {specs.unit} would need {span / step + 1:.0f} channels. "
-            "Combine without blank channels."
+            f"No regular grid of at most {1000 * len(specs_arr)} points holds all "
+            f"{len(specs_arr)} {spequencies}, so blank channels would drop inputs. "
+            "Combine without blank channels, or regrid the inputs onto a common step."
         )
         raise IrregularSpacingException(msg)
-    # Create a new array with the fundamental grid step
-    new_specs = np_arange_fix(specs_arr[0], specs_arr[-1], step)
-    missing_chan_idx = np.logical_not(
-        isin_close(new_specs, specs_arr, time_domain_mode)
-    )
 
-    populated = int(np.logical_not(missing_chan_idx).sum())
-    if populated != len(specs_arr):
-        spequencies = "times" if time_domain_mode else "frequencies"
+    worst = int(np.argmax(grid.residuals))
+    if grid.residuals[worst] > 1e-12 * np.max(np.abs(specs_arr)):
         msg = (
-            f"Cannot place all {len(specs_arr)} {spequencies} on a regular grid of "
-            f"{step} {specs.unit} - only {populated} of {len(new_specs)} grid points "
-            "are matched, so blank channels would drop inputs. Combine without "
-            "blank channels, or regrid the inputs onto a common step."
+            f"The {spequencies} are not exactly on a regular grid of {grid.step} "
+            f"{specs.unit}: {specs_arr[worst]} {specs.unit} is "
+            f"{grid.residuals[worst]} {specs.unit} from "
+            "its plane. The cube labels each plane with its grid value, not the "
+            "input's own."
         )
-        raise IrregularSpacingException(msg)
+        logger.warning(msg)
+
+    new_specs = grid.start + np.arange(grid.index[-1] + 1) * grid.step
+    missing_chan_idx = np.ones(len(new_specs), dtype=bool)
+    missing_chan_idx[grid.index] = False
 
     return SpequencyInfo(new_specs * specs.unit, missing_chan_idx)
 
@@ -533,6 +523,7 @@ async def create_output_cube_coro(
     time_domain_mode: bool = False,
     bounding_box: BoundingBox | None = None,
     float_length: FLOAT_LENGTH | None = None,
+    spec_error: float | None = None,
 ) -> InitResult:
     """Generate the output header and write a dummy cube to disk based on properties of the
     inpute data. The output cube written here has a correctly formed header and a pre-zerod
@@ -549,6 +540,7 @@ async def create_output_cube_coro(
         time_domain_mode (bool, optional): Whether to join images via the DATE-OBS (e.g. time) axis. If False cube joined along frequency axis. Defaults to False.
         bounding_box (BoundingBox | None, optional): Whether a trimming operation should be applied to input images. If a BoundingBox is supplied this will be used to update the reference pixel position and data shape indicators. Defaults to None.
         float_length (Literal[32, 64] | None, optional): The precision of the output data. If None drawn from input data. Otherwise values accepted are 32 and 64. Defaults to None.
+        spec_error (float | None, optional): Largest distance of an input from its plane on a gridded axis, in Hz or s. Written as CSYERi if given. Defaults to None.
 
     Returns:
         InitResult: Details of the output cube, including the output header
@@ -651,6 +643,12 @@ async def create_output_cube_coro(
         del new_header[f"CUNIT{fits_idx}"]
         new_header[f"CTYPE{fits_idx}"] = "CHAN"
         new_header[f"CRVAL{fits_idx}"] = 1
+    elif spec_error is not None:
+        new_header[f"CSYER{fits_idx}"] = spec_error
+        new_header["HISTORY"] = (
+            f"fitscube placed the inputs on a regular {ctype} grid. Each is within "
+            f"CSYER{fits_idx} of its plane."
+        )
 
     # Add extra transform fields for consistency. A CD matrix replaces CDELT,
     # so it must carry the step itself.
@@ -1278,6 +1276,10 @@ async def combine_fits_coro(
     new_sort_idx = np.argsort(specs)
     specs = specs[new_sort_idx]
     missing_chan_idx = missing_chan_idx[new_sort_idx]
+    spec_error = None
+    if create_blanks:
+        populated = specs[~missing_chan_idx]
+        spec_error = float(np.max(np.abs(np.sort(file_specs) - populated)).value)
 
     has_beams = check_for_any_beam(file_list=file_list)
     zero_beam_idx = np.zeros(len(specs), dtype=bool)
@@ -1350,6 +1352,7 @@ async def combine_fits_coro(
         time_domain_mode=time_domain_mode,
         bounding_box=final_bounding_box,
         float_length=float_length,
+        spec_error=spec_error,
     )
 
     if (missing_chan_idx | zero_beam_idx).any() and new_header["BITPIX"] > 0:

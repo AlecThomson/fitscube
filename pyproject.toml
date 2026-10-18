@@ -11,7 +11,7 @@ authors = [
 description = "A package to produce produce FITS cubes."
 readme = "README.md"
 license.file = "LICENSE"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 1 - Planning",
   "Intended Audience :: Science/Research",
@@ -21,7 +21,6 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -31,7 +30,7 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-  "astropy>=6.0",  # StokesCoord
+  "astropy>=7.2",  # thread-safe disable_image_compression, numpy >= 2.4
   "numpy>=2",
   "tqdm",
   "radio_beam",
@@ -107,7 +106,7 @@ report.exclude_also = [
 
 [tool.mypy]
 files = ["fitscube", "tests"]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_configs = true
 strict = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
@@ -175,7 +174,7 @@ isort.required-imports = ["from __future__ import annotations"]
 
 
 [tool.pylint]
-py-version = "3.10"
+py-version = "3.11"
 ignore-paths = [".*/_version.py"]
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
