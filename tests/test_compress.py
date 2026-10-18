@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from astropy.io import fits
+from fitscube import compress as compress_module
 from fitscube.cli import cli
 from fitscube.combine_fits import combine_fits
 from fitscube.compress import (
@@ -232,3 +235,44 @@ def test_requantizing_dithers_afresh(tmp_path: Path) -> None:
     )
 
     assert fits.getheader(second, 1, disable_image_compression=True)["ZDITHER0"] != seed
+
+
+@pytest.mark.parametrize("extra_cards", range(36))
+def test_tile_rice_header_never_grows(tmp_path: Path, extra_cards: int) -> None:
+    """Blanks only past the first tile must not grow the header over its placeholder"""
+    rng = np.random.default_rng(1)
+    data = rng.normal(0, 1e-3, (3, 40, 48)).astype(np.float32)
+    data[-1, -8:] = np.nan
+    header = fits.Header()
+    for i in range(extra_cards):
+        header.add_comment(f"padding {i}")
+    fits.PrimaryHDU(data, header).writeto(tmp_path / "cube.fits")
+
+    compressed = compress_cube(tmp_path / "cube.fits", method="tile-rice")
+
+    got = fits.getdata(compressed, 1)
+    np.testing.assert_array_equal(np.isnan(got), np.isnan(data))
+    finite = np.isfinite(data)
+    assert np.std(got[finite] - data[finite]) < 1e-3 / 4 / np.sqrt(12) * 1.2
+
+
+def test_tile_compress_refuses_a_grown_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A final header longer than its placeholder errors rather than corrupting the file"""
+    write_noise_cube(tmp_path / "cube.fits")
+    original = compress_module.table_header
+
+    def grown(*args: Any, **kwargs: Any) -> fits.Header:
+        header = original(*args, **kwargs)
+        for i in range(36):
+            header.add_comment(f"padding {i}")
+        return header
+
+    calls: Iterator[Callable[..., fits.Header]] = iter([original, grown])
+    monkeypatch.setattr(
+        compress_module, "table_header", lambda *a, **k: next(calls)(*a, **k)
+    )
+    with pytest.raises(RuntimeError, match="placeholder"):
+        tile_compress_cube(tmp_path / "cube.fits", remove=False)
+    assert not (tmp_path / "cube.fits.fz").exists()
