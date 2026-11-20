@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tracemalloc
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from fitscube.combine_fits import combine_fits
 from fitscube.compress import (
     CompressMethod,
     compress_cube,
+    compress_plane,
     decompress_cube,
     tile_compress_cube,
 )
@@ -135,6 +137,27 @@ def test_tile_compress_is_the_same_for_any_worker_count(tmp_path: Path) -> None:
             tile_compress_cube(cube, "RICE_1", 4, max_workers=workers).read_bytes()
         )
     assert outputs[0] == outputs[1]
+
+
+def test_gzip2_shuffles_a_big_endian_plane_without_copying_it() -> None:
+    """Planes come off the file big-endian, the order GZIP_2 shuffles, so no copy is needed"""
+    plane = np.full((256, 1024), 1.5, dtype=">f4")
+    args = ("GZIP_2", 0.0, (16, 1024), 1, 6)
+
+    tracemalloc.start()
+    compressed = compress_plane(plane, *args)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < plane.nbytes / 2
+
+    # The control: a native-order plane has to be copied back to big-endian
+    native = plane.astype("<f4")
+    tracemalloc.start()
+    from_native = compress_plane(native, *args)
+    _, native_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert native_peak >= plane.nbytes
+    assert from_native == compressed
 
 
 def test_tile_compress_refuses_compressed_input(tmp_path: Path) -> None:
