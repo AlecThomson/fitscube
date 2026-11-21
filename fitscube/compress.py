@@ -126,6 +126,7 @@ def gzip2_tiles(
     GZIP_2 gzips the big-endian bytes of the tile, shuffled so that all the first
     bytes of each value come first, then all the second bytes, and so on.
     """
+    # A view, not a copy, for a plane read straight from a FITS file
     big_endian = plane.astype(plane.dtype.newbyteorder(">"), copy=False)
     itemsize = big_endian.dtype.itemsize
     tiles = []
@@ -201,8 +202,14 @@ def compress_plane(
             scales=[],
             zeros=[],
         )
+    # astropy wants native byte order; only this path pays for the copy
     compressed, _ = astropy_compress_plane(
-        plane, fits.Header(), compression_type, quantize_level, tile_shape, dither_seed
+        plane.astype(plane.dtype.newbyteorder("="), copy=False),
+        fits.Header(),
+        compression_type,
+        quantize_level,
+        tile_shape,
+        dither_seed,
     )
     return compressed
 
@@ -260,7 +267,11 @@ def compressed_planes(
     gzip_level: int,
     max_workers: int,
 ) -> Iterator[CompressedPlane]:
-    """Compress every plane of `image` across threads, yielding them in order."""
+    """Compress every plane of `image` across threads, yielding them in order.
+
+    Planes are handed over as read, big-endian, which is the order GZIP_2 shuffles:
+    the lossless path never copies a plane.
+    """
     with ThreadPoolExecutor(max_workers) as pool:
         pending: deque[Future[CompressedPlane]] = deque()
         for plane_index, index in enumerate(np.ndindex(image.shape[:-2])):
@@ -268,7 +279,7 @@ def compressed_planes(
             pending.append(
                 pool.submit(
                     compress_plane,
-                    plane.astype(plane.dtype.newbyteorder("="), copy=False),
+                    plane,
                     compression_type,
                     quantize_level,
                     tile_shape,
