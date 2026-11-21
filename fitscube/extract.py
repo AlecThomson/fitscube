@@ -338,6 +338,20 @@ def create_plane_target_wcs(
     )
 
 
+def beam_header_values(beam: Beam) -> dict[str, float]:
+    """BMAJ, BMIN and BPA in degrees, for a plane header.
+
+    A beam read from a table is float32. Widening it before the unit conversion
+    keeps the header beam equal to the table's: converting in float32 rounds it
+    up, past a target beam that should contain it exactly.
+    """
+    return {
+        "BMAJ": float(beam.major.to_value(u.arcsec)) / 3600,
+        "BMIN": float(beam.minor.to_value(u.arcsec)) / 3600,
+        "BPA": float(beam.pa.to_value(u.deg)),
+    }
+
+
 def update_header_for_target_axis(
     header: fits.header.Header,
     target_wcs: TargetWCS,
@@ -382,9 +396,7 @@ def update_header_for_target_axis(
                 fits_path=extract_beam_from_file, index=target_index.axis_index
             )
 
-            out_header["BMAJ"] = channel_beam.major.to(u.deg).value
-            out_header["BMIN"] = channel_beam.minor.to(u.deg).value
-            out_header["BPA"] = channel_beam.pa.to(u.deg).value
+            out_header.update(beam_header_values(channel_beam))
         except ValueError:
             logger.info("Unable to find beam table, continuing anyway.")
             # A single beam could still be defined as the BMAJ/BMIN/BPA
@@ -508,9 +520,7 @@ def _plane_header(
     )
     if beams is not None:
         beam = beams[target_index.axis_index]
-        out_header["BMAJ"] = beam.major.to(u.deg).value
-        out_header["BMIN"] = beam.minor.to(u.deg).value
-        out_header["BPA"] = beam.pa.to(u.deg).value
+        out_header.update(beam_header_values(beam))
 
     # A plane holds the one channel, so its beam is the BMAJ/BMIN/BPA above
     out_header.pop("CASAMBM", None)
