@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
+from fitscube.combine_fits import combine_fits
 from fitscube.exceptions import (
     ChannelMissingException,
     ShapeMismatchException,
@@ -509,3 +510,64 @@ def test_extract_planes_skips_degenerate_freq(tmpdir) -> None:
     for timestep, path in enumerate(output_paths):
         assert fits.getdata(path).shape == (1, 1, 2, 2)
         assert np.all(fits.getdata(path) == timestep)
+
+
+def _write_beam_plane(path: Path, channel: int, bmaj_arcsec: float) -> Path:
+    header = fits.Header(
+        {
+            "BUNIT": "JY/BEAM",
+            "BMAJ": bmaj_arcsec / 3600,
+            "BMIN": 8.8 / 3600,
+            "BPA": 0.0,
+            "CTYPE1": "RA---SIN",
+            "CRVAL1": 180.0,
+            "CDELT1": -0.001,
+            "CRPIX1": 1.0,
+            "CUNIT1": "deg",
+            "CTYPE2": "DEC--SIN",
+            "CRVAL2": -30.0,
+            "CDELT2": 0.001,
+            "CRPIX2": 1.0,
+            "CUNIT2": "deg",
+            "CTYPE3": "FREQ",
+            "CRVAL3": 8.0e8 + channel * 1.0e6,
+            "CDELT3": 1.0e6,
+            "CRPIX3": 1.0,
+            "CUNIT3": "Hz",
+            "CTYPE4": "STOKES",
+            "CRVAL4": 1.0,
+            "CDELT4": 1.0,
+            "CRPIX4": 1.0,
+        }
+    )
+    fits.writeto(path, np.zeros((1, 1, 8, 8), dtype=np.float32), header=header)
+    return path
+
+
+def test_extracted_beams_match_the_beam_table(tmp_path: Path) -> None:
+    """A plane's header beam reads back as exactly the float32 table beam (#72)"""
+    planes = [
+        _write_beam_plane(tmp_path / f"in{c}.fits", c, bmaj)
+        for c, bmaj in enumerate((10.0, 10.5, 11.0))
+    ]
+    cube = tmp_path / "cube.fits"
+    combine_fits(file_list=planes, out_cube=cube)
+    table = fits.getdata(cube, 1)
+
+    outputs = [tmp_path / f"out{c}.fits" for c in range(3)]
+    extract_planes_from_cube(
+        cube, ExtractPlanesOptions(output_paths=outputs, overwrite=True)
+    )
+    single = extract_plane_from_cube(
+        cube,
+        ExtractOptions(
+            channel_index=2, output_path=tmp_path / "single.fits", overwrite=True
+        ),
+    )
+
+    for c, path in [*enumerate(outputs), (2, single)]:
+        header = fits.getheader(path)
+        # float32 conversion was off by ~1e-9 relative; float64 by an ulp at most
+        assert header["BMAJ"] * 3600 == pytest.approx(table["BMAJ"][c], rel=1e-12)
+        assert header["BMIN"] * 3600 == pytest.approx(table["BMIN"][c], rel=1e-12)
+        assert header["BPA"] == pytest.approx(table["BPA"][c], rel=1e-12)
