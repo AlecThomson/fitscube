@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import itertools
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from io import BufferedRandom
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, TypeVar, get_args
@@ -351,41 +352,89 @@ class GridFit(NamedTuple):
     """Distance of each value from its grid point"""
 
 
+def number_gaps(
+    gaps: NDArray[np.floating[Any]], step: float
+) -> NDArray[np.floating[Any]]:
+    """Grid point of each value, from the gaps between them.
+
+    Each gap is rounded to a whole number of steps, and at least one, as distinct
+    values need planes of their own. Adding up rounded gaps, rather than rounding
+    each value's offset from the first, keeps an error in the step from building
+    up along the span.
+
+    Args:
+        gaps (NDArray[np.floating[Any]]): Gaps between consecutive sorted values
+        step (float): Grid step
+
+    Returns:
+        NDArray[np.floating[Any]]: Grid point of each value, starting from 0
+    """
+    return np.concatenate([[0.0], np.cumsum(np.maximum(np.round(gaps / step), 1))])
+
+
 def fit_grid(
     specs: NDArray[np.floating[Any]], time_domain_mode: bool = False
 ) -> GridFit | None:
     """Find the widest regular grid that holds every sorted value.
 
     The step divides the smallest gap, so steps of that gap over 1, 2, 3...
-    are tried in turn. Each is fitted to all the values, and the first that
-    puts every value on a grid point within the match tolerance wins.
+    are tried in turn. Times come from a regular cadence, so for them only the
+    smallest gap itself is tried. A finer step would let almost any set of
+    times sit within the ~0.5 s match tolerance. The time step starts from the
+    mean of the gaps of one step, which rounded time stamps leave far closer to
+    the cadence than the smallest gap.
+
+    For each step, the values are numbered from their gaps (see `number_gaps`)
+    and a line is fitted through them, which gives a more accurate step. The
+    gaps are renumbered with that step and refitted until the numbering
+    settles. The first step that then puts every value on its grid point,
+    within the match tolerance, wins.
 
     Args:
         specs (NDArray[np.floating[Any]]): Sorted, distinct values
-        time_domain_mode (bool, optional): Use the tolerance for times. Defaults to False.
+        time_domain_mode (bool, optional): Use the tolerance for times, and do not divide the smallest gap. Defaults to False.
 
     Returns:
         GridFit | None: The grid, or None if none of at most 1000 points per value fits
     """
     offsets = specs - specs[0]
     span = offsets[-1]
-    min_gap = np.min(np.diff(specs))
+    # Values too far apart for float64 make the span and the smallest gap both
+    # infinite, and their ratio NaN, which the size check below lets through
+    if not np.isfinite(span):
+        return None
+    gaps = np.diff(specs)
+    min_gap = np.min(gaps)
     tol = match_tolerance(specs, time_domain_mode)
     max_channels = 1000 * len(specs)
+    # A first step only a little short of the cadence still misnumbers a long
+    # gap. The mean is kept to times: frequency gaps of, say, 3 and 4 steps
+    # would average to a step that is not one of theirs.
+    first_step = (
+        float(np.mean(gaps[gaps < 1.5 * min_gap])) if time_domain_mode else min_gap
+    )
 
-    divisor = 1
-    while span * divisor / min_gap < max_channels:
-        index = np.round(offsets * divisor / min_gap)
-        step, start = np.polyfit(index, offsets, 1)
+    divisors: Iterable[int] = (1,) if time_domain_mode else itertools.count(1)
+    for divisor in divisors:
+        if span * divisor / min_gap >= max_channels:
+            break
+        index = number_gaps(gaps, first_step / divisor)
+        for _ in range(5):  # usually settles in one or two passes
+            step, start = np.polyfit(index, offsets, 1)
+            renumbered = number_gaps(gaps, step)
+            settled = np.array_equal(renumbered, index)
+            if settled:
+                break
+            index = renumbered
+
         residuals = np.abs(offsets - start - index * step)
-        if np.all(residuals <= tol):
+        if settled and np.all(residuals <= tol):
             return GridFit(
                 start=float(specs[0] + start),
                 step=float(step),
                 index=index.astype(np.int64),
                 residuals=residuals,
             )
-        divisor += 1
 
     return None
 
@@ -401,9 +450,10 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
 
     Args:
         specs (u.Quantity): Original frequencies/times
+        time_domain_mode (bool, optional): The inputs are times. Defaults to False.
 
     Raises:
-        IrregularSpacingException: If no grid of at most 1000 points per input holds every input
+        IrregularSpacingException: If no grid of at most 1000 points per input holds every input, or for times, none whose step is their smallest gap
 
     Returns:
         SpequencyInfo: specs, missing_chan_idx
@@ -417,9 +467,10 @@ def even_spacing(specs: u.Quantity, time_domain_mode: bool = False) -> Spequency
     spequencies = "times" if time_domain_mode else "frequencies"
     grid = fit_grid(specs_arr, time_domain_mode) if np.all(np.diff(specs_arr)) else None
     if grid is None:
+        step = ", with a step of their smallest gap," if time_domain_mode else ""
         msg = (
-            f"No regular grid of at most {1000 * len(specs_arr)} points holds all "
-            f"{len(specs_arr)} {spequencies}, so blank channels would drop inputs. "
+            f"No regular grid of at most {1000 * len(specs_arr)} points{step} holds "
+            f"all {len(specs_arr)} {spequencies}, so blank channels would drop inputs. "
             "Combine without blank channels, or regrid the inputs onto a common step."
         )
         raise IrregularSpacingException(msg)

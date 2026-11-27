@@ -150,6 +150,17 @@ def test_huge_grids_are_refused():
         even_spacing(np.array([0.0, 1.0, 2.0, 1e6]) * u.Hz)
 
 
+@pytest.mark.parametrize("time_domain_mode", [False, True])
+def test_spans_beyond_float64_are_refused(time_domain_mode: bool) -> None:
+    """Two values whose gap overflows float64 raised numpy's LinAlgError."""
+    specs = np.array([-1e308, 1e308]) * (u.s if time_domain_mode else u.Hz)
+    with (
+        np.errstate(over="ignore"),
+        pytest.raises(IrregularSpacingException, match="would drop inputs"),
+    ):
+        even_spacing(specs, time_domain_mode=time_domain_mode)
+
+
 def test_even_spacing_narrow_channels():
     # 1.16 kHz zoom channels at 1.4 GHz, one missing. A 10 kHz match tolerance
     # would put every input on several grid points.

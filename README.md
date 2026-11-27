@@ -263,6 +263,11 @@ where there is no input. It picks the widest step that holds every input, so
 images of uneven width, or images either side of a gap between bands (as in
 RACS-low3, -mid and -high together), still make a single cube.
 
+For times, the step is always the smallest gap between them, refined by a fit
+over all the times. Time-step images come from a regular cadence, and a finer
+step would let almost any set of times fit within the tolerance below. Times
+that do not sit on that grid are refused.
+
 An input counts as on the grid if it is within ~1 Hz at 1 GHz of a plane (or
 ~0.5 s for times). If any input is off by more than float rounding, `fitscube`
 logs a warning, and the cube's `CSYERi` (the FITS systematic error of the axis)
