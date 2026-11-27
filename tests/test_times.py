@@ -9,6 +9,7 @@ from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
 from fitscube.combine_fits import combine_fits, even_spacing, parse_specs
+from fitscube.exceptions import IrregularSpacingException
 
 
 def test_parse_specs(file_list: list[Path], even_specs: u.Quantity):
@@ -266,3 +267,50 @@ def test_even_spacing_one_second_steps():
     new_times, missing_chan_idx = even_spacing(times, time_domain_mode=True)
     assert len(new_times) == 5
     assert np.array_equal(missing_chan_idx, [False, False, True, False, False])
+
+
+ASKAP_CADENCE = 9.95328  # s
+
+
+def askap_times(n: int = 1564) -> np.ndarray:
+    """Start times of a run of ASKAP integrations, in MJD seconds."""
+    return 5.2597e9 + ASKAP_CADENCE * np.arange(n)
+
+
+@pytest.mark.parametrize("perturb", ["rounded", "jittered"])
+def test_imprecise_times_keep_their_cadence(perturb: str) -> None:
+    """Times a little off a long cadence were put on a ~1 s grid (issue #77).
+
+    wsclean writes DATE-OBS to 0.1 s, so the smallest gap was 9.9 s rather
+    than 9.953 s, and numbering every time against it drifted by a whole step
+    along the run. The ten missing in a row check a long gap is numbered right.
+    """
+    missing = [100, 500, 501, *range(800, 810)]
+    times = np.delete(askap_times(), missing)
+    if perturb == "rounded":
+        times = np.round(times, 1)
+    else:
+        times += np.random.default_rng(0).uniform(-0.3, 0.3, len(times))
+
+    new_times, missing_chan_idx = even_spacing(times * u.s, time_domain_mode=True)
+
+    assert len(new_times) == 1564
+    assert np.flatnonzero(missing_chan_idx).tolist() == missing
+    assert np.allclose(np.diff(new_times.to(u.s).value), ASKAP_CADENCE, atol=1e-3)
+
+
+def test_time_off_the_cadence_is_refused() -> None:
+    """A finer grid would hold an image 1 s off, with eight blanks per input."""
+    times = np.round(askap_times(), 1)
+    times[700] += 1.0
+    with pytest.raises(IrregularSpacingException, match="smallest gap"):
+        even_spacing(times * u.s, time_domain_mode=True)
+
+
+def test_times_are_not_split_below_their_smallest_gap() -> None:
+    """Frequencies 2 and 3 steps apart are gridded, but times must share a cadence."""
+    offsets = np.array([0.0, 20.0, 50.0])
+    new_specs, _ = even_spacing((1e9 + offsets * 1e6) * u.Hz)
+    assert len(new_specs) == 6
+    with pytest.raises(IrregularSpacingException, match="smallest gap"):
+        even_spacing((5.18e9 + offsets) * u.s, time_domain_mode=True)
