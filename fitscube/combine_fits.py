@@ -399,6 +399,10 @@ def fit_grid(
     """
     offsets = specs - specs[0]
     span = offsets[-1]
+    # Values too far apart for float64 make the span and the smallest gap both
+    # infinite, and their ratio NaN, which the size check below lets through
+    if not np.isfinite(span):
+        return None
     gaps = np.diff(specs)
     min_gap = np.min(gaps)
     tol = match_tolerance(specs, time_domain_mode)
