@@ -380,7 +380,9 @@ def fit_grid(
     The step divides the smallest gap, so steps of that gap over 1, 2, 3...
     are tried in turn. Times come from a regular cadence, so for them only the
     smallest gap itself is tried. A finer step would let almost any set of
-    times sit within the ~0.5 s match tolerance.
+    times sit within the ~0.5 s match tolerance. The time step starts from the
+    mean of the gaps of one step, which rounded time stamps leave far closer to
+    the cadence than the smallest gap.
 
     For each step, the values are numbered from their gaps (see `number_gaps`)
     and a line is fitted through them, which gives a more accurate step. The
@@ -401,12 +403,18 @@ def fit_grid(
     min_gap = np.min(gaps)
     tol = match_tolerance(specs, time_domain_mode)
     max_channels = 1000 * len(specs)
+    # A first step only a little short of the cadence still misnumbers a long
+    # gap. The mean is kept to times: frequency gaps of, say, 3 and 4 steps
+    # would average to a step that is not one of theirs.
+    first_step = (
+        float(np.mean(gaps[gaps < 1.5 * min_gap])) if time_domain_mode else min_gap
+    )
 
     divisors: Iterable[int] = (1,) if time_domain_mode else itertools.count(1)
     for divisor in divisors:
         if span * divisor / min_gap >= max_channels:
             break
-        index = number_gaps(gaps, min_gap / divisor)
+        index = number_gaps(gaps, first_step / divisor)
         for _ in range(5):  # usually settles in one or two passes
             step, start = np.polyfit(index, offsets, 1)
             renumbered = number_gaps(gaps, step)

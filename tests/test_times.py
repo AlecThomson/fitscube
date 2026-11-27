@@ -299,8 +299,19 @@ def test_imprecise_times_keep_their_cadence(perturb: str) -> None:
     assert np.allclose(np.diff(new_times.to(u.s).value), ASKAP_CADENCE, atol=1e-3)
 
 
+def test_long_hole_between_short_runs() -> None:
+    """Numbering from the 9.9 s smallest gap settled on one step too many."""
+    present = np.r_[0:50, 150:200]
+    times = np.round(5.2597e9 + ASKAP_CADENCE * present, 1)
+
+    new_times, missing_chan_idx = even_spacing(times * u.s, time_domain_mode=True)
+
+    assert len(new_times) == 200
+    assert np.flatnonzero(~missing_chan_idx).tolist() == present.tolist()
+
+
 def test_time_off_the_cadence_is_refused() -> None:
-    """A finer grid would hold an image 1 s off, with eight blanks per input."""
+    """An image 1 s off the cadence put the run on a ~1 s grid, 90% blank."""
     times = np.round(askap_times(), 1)
     times[700] += 1.0
     with pytest.raises(IrregularSpacingException, match="smallest gap"):
